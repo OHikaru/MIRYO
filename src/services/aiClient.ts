@@ -190,6 +190,36 @@ export async function aiChatUnified(params: {
   // Sanitize API key
   const sanitizedApiKey = config.apiKey?.trim().replace(/[^\x20-\x7E]/g, '');
   
+  // 開発モードかつAPIキーがある場合は直接API呼び出しを優先
+  if (config.devKeyInBrowser && sanitizedApiKey) {
+    console.log('Using direct API call in development mode');
+    const configWithSanitizedKey = { ...config, apiKey: sanitizedApiKey };
+    
+    try {
+      switch (config.provider) {
+        case 'openai':
+          return await callOpenAI(configWithSanitizedKey, messages);
+        case 'anthropic':
+          return await callAnthropic(configWithSanitizedKey, messages);
+        case 'gemini':
+          return await callGemini(configWithSanitizedKey, messages);
+        default:
+          throw new Error('Unknown provider');
+      }
+    } catch (error) {
+      console.error('Direct API call failed:', error);
+      // 直接API呼び出しが失敗した場合はエラーを返す
+      return {
+        answer_markdown: `API呼び出しエラー: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        citations: [],
+        confidence: 0,
+        action: 'handoff_human',
+        reasons: ['API呼び出し失敗']
+      };
+    }
+  }
+  
+  // 本番モードまたはAPIキーがない場合はGateway経由を試行
   if (!config.devKeyInBrowser || !sanitizedApiKey) {
     // 本番はGateway経由でRAGや監査・レート制御を一元化
     try {
@@ -201,42 +231,32 @@ export async function aiChatUnified(params: {
       if (!r.ok) throw new Error(`AI Gateway error: ${r.status}`);
       return await r.json();
     } catch (error) {
-      // AI Gatewayが利用できない場合で、開発モードかつAPIキーがある場合は直接呼び出し
-      if (config.devKeyInBrowser && sanitizedApiKey) {
-        console.warn('AI Gateway unavailable, falling back to direct API call');
-        // 直接API呼び出しにフォールバック
-      } else {
-        // AI Gatewayが利用できない場合はデモ応答を返す
-        return {
-          answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**デモ応答**: ご質問ありがとうございます。本番環境では適切なAI応答が提供されます。',
-          citations: [],
-          confidence: 0.5,
-          action: 'continue_ai',
-          reasons: ['AI Gateway接続エラー']
-        };
-      }
+      console.warn('AI Gateway unavailable:', error);
+      // AI Gatewayが利用できない場合はデモ応答を返す
+      return {
+        answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**デモ応答**: ご質問ありがとうございます。本番環境では適切なAI応答が提供されます。',
+        citations: [],
+        confidence: 0.5,
+        action: 'continue_ai',
+        reasons: ['AI Gateway接続エラー']
+      };
     }
   }
-
-  // Use sanitized API key for direct calls
-  const configWithSanitizedKey = { ...config, apiKey: sanitizedApiKey };
   
-  switch (config.provider) {
-    case 'openai':
-      return callOpenAI(configWithSanitizedKey, messages);
-    case 'anthropic':
-      return callAnthropic(configWithSanitizedKey, messages);
-    case 'gemini':
-      return callGemini(configWithSanitizedKey, messages);
-    default:
-      throw new Error('Unknown provider');
-  }
+  // この行に到達することはないはずですが、安全のため
+  return {
+    answer_markdown: '設定エラー: 適切なAI設定が見つかりません。',
+    citations: [],
+    confidence: 0,
+    action: 'handoff_human',
+    reasons: ['設定エラー']
+  };
 }
 
 // --- OpenAI Responses API -----------------------------------
 async function callOpenAI(config: AIModelConfig, messages: { role: string; content: string }[]): Promise<AIResponse> {
-  const input = messages.map(m => ({ role: m.role, content: [{ type: 'text', text: m.content }] }));
-  const r = await fetch(`${config.endpointBase || 'https://api.openai.com'}/v1/responses`, {
+  // OpenAIのChat Completions APIを使用（Responses APIではなく）
+  const r = await fetch(`${config.endpointBase || 'https://api.openai.com'}/v1/chat/completions`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${config.apiKey}`,
@@ -244,11 +264,18 @@ async function callOpenAI(config: AIModelConfig, messages: { role: string; conte
     },
     body: JSON.stringify({
       model: config.model || 'gpt-4.1-mini',
-      input
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      max_tokens: 1000
     })
   });
+  
+  if (!r.ok) {
+    const errorText = await r.text();
+    throw new Error(`OpenAI API error ${r.status}: ${errorText}`);
+  }
+  
   const j = await r.json();
-  const text = j.output_text ?? j?.choices?.[0]?.message?.content ?? JSON.stringify(j);
+  const text = j?.choices?.[0]?.message?.content ?? 'No response from OpenAI';
   return {
     answer_markdown: text,
     citations: [],
@@ -276,8 +303,14 @@ async function callAnthropic(config: AIModelConfig, messages: { role: string; co
       max_tokens: 1024
     })
   });
+  
+  if (!r.ok) {
+    const errorText = await r.text();
+    throw new Error(`Anthropic API error ${r.status}: ${errorText}`);
+  }
+  
   const j = await r.json();
-  const text = j?.content?.[0]?.text ?? JSON.stringify(j);
+  const text = j?.content?.[0]?.text ?? 'No response from Anthropic';
   return {
     answer_markdown: text,
     citations: [],
@@ -296,8 +329,14 @@ async function callGemini(config: AIModelConfig, messages: { role: string; conte
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': `${config.apiKey}` },
     body: JSON.stringify({ contents: input })
   });
+  
+  if (!r.ok) {
+    const errorText = await r.text();
+    throw new Error(`Gemini API error ${r.status}: ${errorText}`);
+  }
+  
   const j = await r.json();
-  const text = j?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ?? JSON.stringify(j);
+  const text = j?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ?? 'No response from Gemini';
   return {
     answer_markdown: text,
     citations: [],
