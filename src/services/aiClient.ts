@@ -120,11 +120,19 @@ async function fetchAnthropicModels(apiKey: string, endpointBase?: string): Prom
 // --- Gemini: GET /v1beta/models -----------------------------
 async function fetchGeminiModels(apiKey?: string): Promise<ModelInfo[]> {
   // APIキーはクエリかヘッダ（x-goog-api-key）どちらでも可。ここではクエリに付与。
+  if (!apiKey) {
+    console.warn('Gemini API key not provided, returning empty model list');
+    return [];
+  }
+  
   const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
-  if (apiKey) url.searchParams.set('key', apiKey);
+  url.searchParams.set('key', apiKey);
   const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
   if (!res.ok) {
-    throw new Error(`Gemini models error ${res.status}`);
+    if (res.status === 403) {
+      throw new Error(`Gemini API key is invalid or lacks permissions (403). Please check your API key in Google AI Studio.`);
+    }
+    throw new Error(`Gemini models error ${res.status}: ${res.statusText}`);
   }
   const j = await res.json();
   const models: any[] = j?.models ?? [];

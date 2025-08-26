@@ -23,6 +23,7 @@ const SettingsView: React.FC = () => {
     openai: [], anthropic: [], gemini: []
   });
   const [loadingModels, setLoadingModels] = useState(false);
+  const [modelError, setModelError] = useState<string>('');
   const currentProvider: Provider = (settings?.ai?.model.provider || 'openai') as Provider;
   const currentApiKey = settings?.ai?.model.apiKey || '';
   const devKeyInBrowser = !!settings?.ai?.model.devKeyInBrowser;
@@ -64,6 +65,7 @@ const SettingsView: React.FC = () => {
   const refreshModels = async () => {
     if (!settings?.ai?.model.provider) return;
     setLoadingModels(true);
+    setModelError('');
     try {
       const provider = settings.ai.model.provider as Provider;
       const models = await fetchAvailableModels(provider, currentApiKey, endpointBase, devKeyInBrowser);
@@ -74,7 +76,10 @@ const SettingsView: React.FC = () => {
         setModel({ model: models[0].id });
       }
     } catch (e) {
-      console.error('Failed to fetch models:', e);
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
+      console.error('Failed to fetch models:', errorMessage);
+      setModelError(errorMessage);
+      setAvailableModels(prev => ({ ...prev, [currentProvider]: [] }));
     } finally {
       setLoadingModels(false);
     }
@@ -239,6 +244,16 @@ const SettingsView: React.FC = () => {
                     <div className="text-xs text-gray-500 mt-1">
                       ※ モデル一覧取得はベンダのAPIに依存します（OpenAI/Anthropic/Gemini）。取得できない場合は直接IDを入力してください。
                     </div>
+                    {modelError && (
+                      <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                        <strong>エラー:</strong> {modelError}
+                        {currentProvider === 'gemini' && modelError.includes('403') && (
+                          <div className="mt-1">
+                            <strong>解決方法:</strong> Google AI Studio で有効なAPIキーを取得し、上記の「開発用APIキー」欄に入力してください。
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="text-xs text-gray-500 flex items-center gap-2"><KeyRound size={14}/> 開発用APIキー（本番禁止）</label>
@@ -250,6 +265,11 @@ const SettingsView: React.FC = () => {
                       placeholder="開発中のみブラウザに保持"
                     />
                     <div className="mt-1 text-xs text-red-600">※ 本番ではAI Gatewayでキー管理（フロント保持禁止）</div>
+                    {!settings?.ai?.model.apiKey && settings?.ai?.model.devKeyInBrowser && (
+                      <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700">
+                        <strong>APIキーが未設定です。</strong> モデル一覧を取得するには、各プロバイダーの有効なAPIキーが必要です。
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="text-xs text-gray-500">エンドポイント（任意）</label>
