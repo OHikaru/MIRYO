@@ -5,7 +5,8 @@
 //  - OpenAI: GET https://api.openai.com/v1/models（Bearer）で一覧取得（公式ドキュメント）。 
 //  - Anthropic: GET https://api.anthropic.com/v1/models（x-api-key + anthropic-version）で一覧取得（公式）。
 //  - Gemini:   GET https://generativelanguage.googleapis.com/v1beta/models?key=API_KEY で一覧取得（公式）。
-//  - aiChatUnified は既存のまま（Responses / Messages / generateContent を利用）。
+//  - aiChatUnified は Gateway優先、失敗時は **APIキーがあれば直叩きへ安全表示つきフォールバック**。
+//  - Geminiモデル取得の重複 if を整理。
 //
 // 参照:
 //  - OpenAI List models: https://platform.openai.com/docs/api-reference/models/list
@@ -36,34 +37,62 @@ export async function fetchAvailableModels(
   // Sanitize API key to prevent HTTP header issues
   const sanitizedApiKey = apiKey?.trim().replace(/[^\x20-\x7E]/g, '');
 
-  // 本番: ブラウザにキーを置かず、サーバのプロキシへ（開発モードでない場合）
-  if (!useBrowserKey || !sanitizedApiKey) {
+  // 本番: ブラウザにキーを置かず、サーバのプロキシへ
+  if (!useBrowserKey) {
     try {
       const r = await fetch(`/api/ai/models?provider=${encodeURIComponent(provider)}`, {
         method: 'GET',
         headers: { 'Accept': 'application/json' }
       });
       if (r.ok) {
-        const data = await r.json();
-        return (data?.models || []) as ModelInfo[];
+        const j = await r.json();
+        // サーバからの生レスポンスを各プロバイダの形式に合わせて整形
+        if (provider === 'openai') {
+          const data: any[] = j?.data ?? [];
+          const chatLike = /^(gpt|o\d|o[34]|omni|gpt-4|gpt-4o|gpt-4\.1|gpt-4o-mini)/i;
+          const mapped: ModelInfo[] = data
+            .filter((m: any) => typeof m?.id === 'string')
+            .map((m: any) => ({ id: m.id, name: m.id, description: m.root ? `root:${m.root}` : undefined }))
+            .filter((m: any) => chatLike.test(m.id));
+          const order = ['o4', 'o3', 'omni', 'gpt-4.1', 'gpt-4o', 'gpt-4o-mini', 'gpt-4'];
+          mapped.sort((a,b) => {
+            const ia = order.findIndex(k => a.id.startsWith(k));
+            const ib = order.findIndex(k => b.id.startsWith(k));
+            return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib) || a.id.localeCompare(b.id);
+          });
+          return dedupeById(mapped);
+        }
+        if (provider === 'anthropic') {
+          const data: any[] = j?.data ?? [];
+          const mapped: ModelInfo[] = data.map((m: any) => ({
+            id: m?.id,
+            name: m?.display_name || m?.id,
+            description: m?.description,
+            inputModalities: m?.input_modalities || [],
+            outputModalities: m?.output_modalities || [],
+            contextWindow: typeof m?.context_window === 'number' ? m.context_window : undefined
+          })).filter(m => !!m.id);
+          return dedupeById(mapped);
+        }
+        if (provider === 'gemini') {
+          const models: any[] = j?.models ?? [];
+          const mapped: ModelInfo[] = models.map((m: any) => ({
+            id: m?.name,                       // 例: models/gemini-2.0-flash
+            name: m?.displayName || m?.name,   // 例: Gemini 2.0 Flash
+            description: m?.description,
+            inputModalities: m?.inputModalities || m?.supportedGenerationMethods,
+            outputModalities: m?.outputModalities,
+            contextWindow: m?.inputTokenLimit
+          })).filter(m => !!m.id);
+          return dedupeById(mapped);
+        }
       }
-      // If proxy fails and we're not in dev mode, return empty array
-      if (!useBrowserKey) {
-        console.warn(`AI models proxy failed for ${provider}, and not in development mode`);
-        return [];
-      }
-    } catch (error) {
-      console.warn(`AI models proxy unavailable for ${provider}, falling back to direct API (dev only).`);
-      // If proxy fails and we're not in dev mode, return empty array
-      if (!useBrowserKey || !sanitizedApiKey) {
-        return [];
-      }
+    } catch {
+      console.warn('AI models proxy unavailable, falling back to direct API (dev only).');
     }
   }
 
-  // Development mode: require API key for direct calls
-  if (!sanitizedApiKey) {
-    console.warn(`No API key provided for ${provider} in development mode`);
+  if (!sanitizedApiKey && provider !== 'gemini') {
     return [];
   }
 
@@ -73,7 +102,7 @@ export async function fetchAvailableModels(
     case 'anthropic':
       return fetchAnthropicModels(sanitizedApiKey!, endpointBase);
     case 'gemini':
-      return fetchGeminiModels(sanitizedApiKey);
+      return fetchGeminiModels(sanitizedApiKey); // Geminiはkeyがクエリに必要（ヘッダでも可）
     default:
       return [];
   }
@@ -89,17 +118,15 @@ async function fetchOpenAIModels(apiKey: string, endpointBase?: string): Promise
     if (res.status === 401) {
       throw new Error(`OpenAI API key is invalid or missing (401). Please check your API key in the OpenAI Platform.`);
     }
-    throw new Error(`OpenAI models error ${res.status}: ${res.statusText}`);
+    throw new Error(`OpenAI models error ${res.status}`);
   }
   const j = await res.json();
   const data: any[] = j?.data ?? [];
-  // OpenAIのListは埋め込み/音声等も含むため、チャット向け代表的名称で粗フィルタ
   const chatLike = /^(gpt|o\d|o[34]|omni|gpt-4|gpt-4o|gpt-4\.1|gpt-4o-mini)/i;
   const mapped: ModelInfo[] = data
     .filter(m => typeof m?.id === 'string')
     .map(m => ({ id: m.id, name: m.id, description: m.root ? `root:${m.root}` : undefined }))
     .filter(m => chatLike.test(m.id));
-  // ある程度の安定順に並べ替え（新しそうな接頭辞を優先）
   const order = ['o4', 'o3', 'omni', 'gpt-4.1', 'gpt-4o', 'gpt-4o-mini', 'gpt-4'];
   mapped.sort((a,b) => {
     const ia = order.findIndex(k => a.id.startsWith(k));
@@ -141,7 +168,7 @@ async function fetchGeminiModels(apiKey?: string): Promise<ModelInfo[]> {
     console.warn('Gemini API key not provided, returning empty model list');
     return [];
   }
-
+  
   const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
   url.searchParams.set('key', apiKey);
   const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
@@ -149,10 +176,7 @@ async function fetchGeminiModels(apiKey?: string): Promise<ModelInfo[]> {
     if (res.status === 403) {
       throw new Error(`Gemini API key is invalid or lacks permissions (403). Please check your API key in Google AI Studio.`);
     }
-    if (res.status === 400) {
-      throw new Error(`Gemini API request was malformed (400). Please check your API key and try again.`);
-    }
-    throw new Error(`Gemini models error ${res.status}: ${res.statusText}`);
+    throw new Error(`Gemini models error ${res.status}`);
   }
   const j = await res.json();
   const models: any[] = j?.models ?? [];
@@ -177,7 +201,7 @@ function dedupeById(list: ModelInfo[]): ModelInfo[] {
 }
 
 // ------------------------------------------------------------
-// チャット統合呼び出し（既存）
+// チャット統合呼び出し（Gateway優先・安全フォールバック）
 // ------------------------------------------------------------
 export async function aiChatUnified(params: {
   config: AIModelConfig;
@@ -186,41 +210,9 @@ export async function aiChatUnified(params: {
   knowledgeDocs: KnowledgeDoc[];
 }): Promise<AIResponse> {
   const { config, messages } = params;
-  
-  // Sanitize API key
-  const sanitizedApiKey = config.apiKey?.trim().replace(/[^\x20-\x7E]/g, '');
-  
-  // 開発モードかつAPIキーがある場合は直接API呼び出しを優先
-  if (config.devKeyInBrowser && sanitizedApiKey) {
-    console.log('Using direct API call in development mode');
-    const configWithSanitizedKey = { ...config, apiKey: sanitizedApiKey };
-    
-    try {
-      switch (config.provider) {
-        case 'openai':
-          return await callOpenAI(configWithSanitizedKey, messages);
-        case 'anthropic':
-          return await callAnthropic(configWithSanitizedKey, messages);
-        case 'gemini':
-          return await callGemini(configWithSanitizedKey, messages);
-        default:
-          throw new Error('Unknown provider');
-      }
-    } catch (error) {
-      console.error('Direct API call failed:', error);
-      // 直接API呼び出しが失敗した場合はエラーを返す
-      return {
-        answer_markdown: `API呼び出しエラー: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        citations: [],
-        confidence: 0,
-        action: 'handoff_human',
-        reasons: ['API呼び出し失敗']
-      };
-    }
-  }
-  
-  // 本番モードまたはAPIキーがない場合はGateway経由を試行
-  if (!config.devKeyInBrowser || !sanitizedApiKey) {
+  const hasBrowserKey = !!config.apiKey;
+
+  if (!config.devKeyInBrowser) {
     // 本番はGateway経由でRAGや監査・レート制御を一元化
     try {
       const r = await fetch('/api/ai/chat', {
@@ -231,31 +223,37 @@ export async function aiChatUnified(params: {
       if (!r.ok) throw new Error(`AI Gateway error: ${r.status}`);
       return await r.json();
     } catch (error) {
-      console.warn('AI Gateway unavailable:', error);
-      // AI Gatewayが利用できない場合はデモ応答を返す
-      return {
-        answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**デモ応答**: ご質問ありがとうございます。本番環境では適切なAI応答が提供されます。',
-        citations: [],
-        confidence: 0.5,
-        action: 'continue_ai',
-        reasons: ['AI Gateway接続エラー']
-      };
+      // Gatewayが落ちているが、ブラウザ側にAPIキーがあるなら「開発用の一時フォールバック」で直叩き
+      if (hasBrowserKey) {
+        console.warn('AI Gateway unavailable; falling back to direct provider call using browser-held API key (dev fallback).');
+        // 以降は直叩きに進む
+      } else {
+        // APIキーもなくGatewayも無い → デモ応答
+        return {
+          answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**デモ応答**: ご質問ありがとうございます。本番環境では適切なAI応答が提供されます。',
+          citations: [],
+          confidence: 0.5,
+          action: 'continue_ai',
+          reasons: ['AI Gateway接続エラー']
+        };
+      }
     }
   }
-  
-  // この行に到達することはないはずですが、安全のため
-  return {
-    answer_markdown: '設定エラー: 適切なAI設定が見つかりません。',
-    citations: [],
-    confidence: 0,
-    action: 'handoff_human',
-    reasons: ['設定エラー']
-  };
+
+  switch (config.provider) {
+    case 'openai':
+      return callOpenAI(config, messages);
+    case 'anthropic':
+      return callAnthropic(config, messages);
+    case 'gemini':
+      return callGemini(config, messages);
+    default:
+      throw new Error('Unknown provider');
+  }
 }
 
-// --- OpenAI Responses API -----------------------------------
+// --- OpenAI Chat Completions API -----------------------------------
 async function callOpenAI(config: AIModelConfig, messages: { role: string; content: string }[]): Promise<AIResponse> {
-  // OpenAIのChat Completions APIを使用（Responses APIではなく）
   const r = await fetch(`${config.endpointBase || 'https://api.openai.com'}/v1/chat/completions`, {
     method: 'POST',
     headers: {
@@ -263,7 +261,7 @@ async function callOpenAI(config: AIModelConfig, messages: { role: string; conte
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: config.model || 'gpt-4.1-mini',
+      model: config.model || 'gpt-4o-mini',
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       max_tokens: 1000
     })
