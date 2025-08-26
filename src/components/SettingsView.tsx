@@ -250,12 +250,24 @@ const SettingsView: React.FC = () => {
                         <strong>エラー:</strong> {modelError}
                         {currentProvider === 'openai' && modelError.includes('401') && (
                           <div className="mt-1">
-                            <strong>解決方法:</strong> OpenAI Platform で有効なAPIキーを取得し、上記の「開発用APIキー」欄に入力してください。
+                            <strong>解決方法:</strong>
+                            <ol className="mt-1 ml-4 list-decimal">
+                              <li><a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">OpenAI Platform</a> でAPIキーを作成</li>
+                              <li>上記の「開発用APIキー」欄にAPIキーを入力</li>
+                              <li>「開発モード」を <strong>true</strong> に設定</li>
+                              <li>「保存」ボタンをクリック</li>
+                            </ol>
                           </div>
                         )}
                         {currentProvider === 'gemini' && modelError.includes('403') && (
                           <div className="mt-1">
-                            <strong>解決方法:</strong> Google AI Studio で有効なAPIキーを取得し、上記の「開発用APIキー」欄に入力してください。
+                            <strong>解決方法:</strong>
+                            <ol className="mt-1 ml-4 list-decimal">
+                              <li><a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">Google AI Studio</a> でAPIキーを作成</li>
+                              <li>上記の「開発用APIキー」欄にAPIキーを入力</li>
+                              <li>「開発モード」を <strong>true</strong> に設定</li>
+                              <li>「保存」ボタンをクリック</li>
+                            </ol>
                           </div>
                         )}
                       </div>
@@ -273,7 +285,20 @@ const SettingsView: React.FC = () => {
                     <div className="mt-1 text-xs text-red-600">※ 本番ではAI Gatewayでキー管理（フロント保持禁止）</div>
                     {!currentApiKey && devKeyInBrowser && (
                       <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700">
-                        <strong>APIキーが未設定です。</strong> モデル一覧を取得するには、{currentProvider === 'openai' ? 'OpenAI Platform' : currentProvider === 'gemini' ? 'Google AI Studio' : 'Anthropic Console'}で有効なAPIキーが必要です。
+                        <strong>APIキーが未設定です。</strong>
+                        <div className="mt-1">
+                          モデル一覧を取得するには、以下の手順でAPIキーを設定してください：
+                          <ol className="mt-1 ml-4 list-decimal">
+                            <li>
+                              {currentProvider === 'openai' && <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">OpenAI Platform</a>}
+                              {currentProvider === 'gemini' && <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">Google AI Studio</a>}
+                              {currentProvider === 'anthropic' && <a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">Anthropic Console</a>}
+                              でAPIキーを作成
+                            </li>
+                            <li>上記の「開発用APIキー」欄にAPIキーを入力</li>
+                            <li>「保存」ボタンをクリック</li>
+                          </ol>
+                        </div>
                       </div>
                     )}
                   </div>
