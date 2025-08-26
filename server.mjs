@@ -26,8 +26,10 @@ let pdfParse = null;
 try {
   const mod = await import('pdf-parse');
   pdfParse = mod.default || mod;
+  console.log('[Gateway] pdf-parse loaded successfully');
 } catch (e) {
-  console.warn('[Gateway] pdf-parse が読み込めませんでした。PDFテキスト抽出は無効化されます。', String(e));
+  console.warn('[Gateway] pdf-parse could not be loaded. PDF text extraction disabled.');
+  pdfParse = null;
 }
 
 const app = express();
