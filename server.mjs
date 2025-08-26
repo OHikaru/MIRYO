@@ -109,14 +109,8 @@ app.post('/api/ai/docs', upload.single('file'), async (req, res) => {
 
     let text = '';
     const isPdf = (file.mimetype?.includes('pdf') || file.originalname.toLowerCase().endsWith('.pdf'));
-    if (isPdf && pdfParse) {
-      try {
-        const parsed = await pdfParse(file.buffer);
-        text = parsed.text || '';
-      } catch (e) {
-        console.warn('[Gateway] pdf-parse failed. Fallback to empty text.', e);
-        text = '';
-      }
+    if (isPdf) {
+      text = await parsePDF(file.buffer);
     } else {
       text = file.buffer.toString('utf-8');
     }
