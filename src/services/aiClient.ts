@@ -52,7 +52,9 @@ export async function fetchAvailableModels(
     }
   }
 
-  if (!sanitizedApiKey && provider !== 'gemini') {
+  // For development mode, require API key for all providers
+  if (!sanitizedApiKey) {
+    console.warn(`No API key provided for ${provider} in development mode`);
     return [];
   }
 
