@@ -43,9 +43,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ai: {
       model: {
         provider: 'openai',
-        model: 'gpt-4.1-mini',
+        model: 'gpt-4o-mini',
         endpointBase: 'https://api.openai.com',
-        devKeyInBrowser: false
+        devKeyInBrowser: true
       },
       retrieval: { topK: 5, threshold: 0.45, scopes: ['clinic_docs', 'faq', 'policies'] }
     }

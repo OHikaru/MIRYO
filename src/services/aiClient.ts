@@ -92,17 +92,18 @@ export async function fetchAvailableModels(
     }
   }
 
-  if (!sanitizedApiKey && provider !== 'gemini') {
+  if (!sanitizedApiKey) {
+    console.warn('No API key provided for direct API call');
     return [];
   }
 
   switch (provider) {
     case 'openai':
-      return fetchOpenAIModels(sanitizedApiKey!, endpointBase);
+      return fetchOpenAIModels(sanitizedApiKey, endpointBase);
     case 'anthropic':
-      return fetchAnthropicModels(sanitizedApiKey!, endpointBase);
+      return fetchAnthropicModels(sanitizedApiKey, endpointBase);
     case 'gemini':
-      return fetchGeminiModels(sanitizedApiKey); // Geminiはkeyがクエリに必要（ヘッダでも可）
+      return fetchGeminiModels(sanitizedApiKey);
     default:
       return [];
   }
@@ -163,7 +164,6 @@ async function fetchAnthropicModels(apiKey: string, endpointBase?: string): Prom
 
 // --- Gemini: GET /v1beta/models -----------------------------
 async function fetchGeminiModels(apiKey?: string): Promise<ModelInfo[]> {
-  // APIキーはクエリかヘッダ（x-goog-api-key）どちらでも可。ここではクエリに付与。
   if (!apiKey) {
     console.warn('Gemini API key not provided, returning empty model list');
     return [];
@@ -212,34 +212,40 @@ export async function aiChatUnified(params: {
   const { config, messages } = params;
   const hasBrowserKey = !!config.apiKey;
 
-  if (!config.devKeyInBrowser) {
-    // 本番はGateway経由でRAGや監査・レート制御を一元化
-    try {
-      const r = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params)
-      });
-      if (!r.ok) throw new Error(`AI Gateway error: ${r.status}`);
-      return await r.json();
-    } catch (error) {
-      // Gatewayが落ちているが、ブラウザ側にAPIキーがあるなら「開発用の一時フォールバック」で直叩き
-      if (hasBrowserKey) {
-        console.warn('AI Gateway unavailable; falling back to direct provider call using browser-held API key (dev fallback).');
-        // 以降は直叩きに進む
-      } else {
-        // APIキーもなくGatewayも無い → デモ応答
-        return {
-          answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**デモ応答**: ご質問ありがとうございます。本番環境では適切なAI応答が提供されます。',
-          citations: [],
-          confidence: 0.5,
-          action: 'continue_ai',
-          reasons: ['AI Gateway接続エラー']
-        };
-      }
-    }
+  // 開発モードが有効で、APIキーがある場合は直接API呼び出しを優先
+  if (config.devKeyInBrowser && hasBrowserKey) {
+    console.log('Development mode: Using direct API call with browser-held key');
+    return callProviderDirectly(config, messages);
   }
 
+  // 本番モード: Gateway経由でRAGや監査・レート制御を一元化
+  try {
+    const r = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params)
+    });
+    if (!r.ok) throw new Error(`AI Gateway error: ${r.status}`);
+    return await r.json();
+  } catch (error) {
+    // Gatewayが落ちているが、ブラウザ側にAPIキーがあるなら「開発用の一時フォールバック」で直叩き
+    if (hasBrowserKey) {
+      console.warn('AI Gateway unavailable; falling back to direct provider call using browser-held API key (dev fallback).');
+      return callProviderDirectly(config, messages);
+    } else {
+      // APIキーもなくGatewayも無い → デモ応答
+      return {
+        answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**解決方法:**\n1. 設定画面で「開発モード」を `true` に設定\n2. 有効なAPIキーを入力\n3. 保存ボタンをクリック',
+        citations: [],
+        confidence: 0.5,
+        action: 'continue_ai',
+        reasons: ['AI Gateway接続エラー']
+      };
+    }
+  }
+}
+
+async function callProviderDirectly(config: AIModelConfig, messages: { role: string; content: string }[]): Promise<AIResponse> {
   switch (config.provider) {
     case 'openai':
       return callOpenAI(config, messages);
