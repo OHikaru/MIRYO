@@ -3,7 +3,7 @@ import React, { createContext, useContext, useState } from 'react';
 import {
   AppContextType, ChatRoom, Message, Appointment, MedicalRecord,
   UserSettings, KnowledgeDoc, AIResponse, WebRTCStats,
-  Prescription, ReferralLetter
+  Prescription, ReferralLetter, EmergencyAlert
 } from '../types';
 import { useAuth } from './AuthContext';
 import { aiChatUnified } from '../services/aiClient';
@@ -28,6 +28,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Data
   const [appointments] = useState<Appointment[]>([]);
   const [medicalRecords] = useState<MedicalRecord[]>([]);
+  const [emergencyAlerts, setEmergencyAlerts] = useState<EmergencyAlert[]>([]);
 
   // eConsent（テンプレ/記録はダミー）
   const [consentTemplates] = useState([]);
@@ -157,6 +158,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     console.debug('audit', { type, actorId, subjectId, data, at: new Date().toISOString() });
   };
 
+  // Emergency alerts management
+  const addEmergencyAlert = (alert: Omit<EmergencyAlert, 'id' | 'createdAt' | 'acknowledged'>) => {
+    const newAlert: EmergencyAlert = {
+      ...alert,
+      id: `alert_${Date.now()}`,
+      createdAt: new Date(),
+      acknowledged: false
+    };
+    setEmergencyAlerts(prev => [newAlert, ...prev]);
+    return newAlert;
+  };
+
+  const acknowledgeAlert = (alertId: string, responderId: string, response?: string) => {
+    setEmergencyAlerts(prev => prev.map(alert => 
+      alert.id === alertId 
+        ? { ...alert, acknowledged: true, responderId, response, resolvedAt: new Date() }
+        : alert
+    ));
+  };
   // チャットユーティリティ
   const addMessage = (m: Message) => setMessages(prev => [...prev, m]);
 
@@ -166,7 +186,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       currentRole,
       activeRoom, setActiveRoom, messages, addMessage,
       isVideoCallActive, setIsVideoCallActive, isScreenSharing, setScreenSharing,
-      appointments, medicalRecords,
+      appointments, medicalRecords, emergencyAlerts, addEmergencyAlert, acknowledgeAlert,
       consentTemplates, consentRecords,
       userSettings, updateSettings,
       knowledgeDocs, uploadKnowledgeDoc,

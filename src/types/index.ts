@@ -54,6 +54,7 @@ export interface EmergencyAlert {
   id: string;
   patientId: string;
   message: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
   createdAt: Date;
   acknowledged: boolean;
   responderId?: string;
@@ -198,6 +199,9 @@ export interface AppContextType {
   // 予約/患者/記録
   appointments: Appointment[];
   medicalRecords: MedicalRecord[];
+  emergencyAlerts: EmergencyAlert[];
+  addEmergencyAlert: (alert: Omit<EmergencyAlert, 'id' | 'createdAt' | 'acknowledged'>) => EmergencyAlert;
+  acknowledgeAlert: (alertId: string, responderId: string, response?: string) => void;
 
   // eConsent
   consentTemplates: ConsentTemplate[];
