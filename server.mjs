@@ -48,6 +48,20 @@ const pickKey = (provider, clientKey) => {
   return '';
 };
 
+// PDF parsing function
+async function parsePDF(buffer) {
+  if (!pdfParse) {
+    throw new Error('pdf-parse is not available');
+  }
+  try {
+    const data = await pdfParse(buffer);
+    return data.text || '';
+  } catch (error) {
+    console.error('[Gateway] PDF parsing error:', error);
+    return `[PDF parsing failed: ${error.message}]`;
+  }
+}
+
 // --- Health check ---
 app.get('/api/health', (req, res) => {
   res.json({
