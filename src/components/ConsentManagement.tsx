@@ -1,15 +1,5 @@
 import React, { useState } from 'react';
-import { 
-  FileText, 
-  Shield, 
-  CheckCircle, 
-  Clock, 
-  AlertTriangle,
-  Download,
-  Eye,
-  Signature,
-  Lock
-} from 'lucide-react';
+import { FileText, Shield, CheckCircle, Clock, AlertTriangle, Download, Eye, FileSignature as Signature, Lock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import { ConsentTemplate, ConsentRecord } from '../types';
