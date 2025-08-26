@@ -1,18 +1,20 @@
 import React from 'react';
 import { MessageSquare, Calendar, Users, Settings, AlertTriangle, Phone, Video, FileText } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useApp } from '../contexts/AppContext';
 import UserProfile from './UserProfile';
 
 const Sidebar: React.FC = () => {
   const { user } = useAuth();
+  const { activeView, setActiveView } = useApp();
 
   const menuItems = [
-    { icon: MessageSquare, label: 'Consultations', active: true },
-    { icon: Calendar, label: 'Appointments', active: false },
-    { icon: Users, label: 'Patients', active: false, doctorOnly: true },
-    { icon: FileText, label: 'Medical Records', active: false },
-    { icon: AlertTriangle, label: 'Emergency Alerts', active: false },
-    { icon: Settings, label: 'Settings', active: false },
+    { icon: MessageSquare, label: 'Consultations', key: 'consultations' },
+    { icon: Calendar, label: 'Appointments', key: 'appointments' },
+    { icon: Users, label: 'Patients', key: 'patients', doctorOnly: true },
+    { icon: FileText, label: 'Medical Records', key: 'medical-records' },
+    { icon: AlertTriangle, label: 'Emergency Alerts', key: 'emergency-alerts' },
+    { icon: Settings, label: 'Settings', key: 'settings' },
   ];
 
   const filteredItems = menuItems.filter(item => 
@@ -30,11 +32,14 @@ const Sidebar: React.FC = () => {
         <ul className="space-y-2">
           {filteredItems.map((item) => (
             <li key={item.label}>
-              <button className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                item.active 
+              <button 
+                onClick={() => setActiveView(item.key)}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                activeView === item.key
                   ? 'bg-blue-50 text-blue-700 border border-blue-200' 
                   : 'text-gray-600 hover:bg-gray-50'
-              }`}>
+              }`}
+              >
                 <item.icon size={20} />
                 <span className="font-medium">{item.label}</span>
               </button>
