@@ -1,32 +1,12 @@
 // REVISED: 「AI & 知識ベース」タブを追加し、プロバイダ選択・APIキー・モデル・RAG設定・ソース登録を提供
 import React, { useEffect, useState } from 'react';
-import { Settings, User, Bell, Shield, Globe, Cpu, Database, Save, KeyRound } from 'lucide-react';
+import { Settings, User, Bell, Shield, Globe, Cpu, Database, Save, KeyRound, RefreshCw } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import { AIProvider, AISettings, UserSettings } from '../types';
 import KnowledgeBaseManager from './KnowledgeBaseManager';
+import { fetchAvailableModels } from '../services/aiClient';
 
-// 最新のモデル情報（2025年1月時点）
-const AI_MODELS = {
-  openai: [
-    { value: 'gpt-4o', label: 'GPT-4o (最新・推奨)', description: '最新の高性能モデル' },
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini', description: '軽量・高速モデル' },
-    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', description: '従来の高性能モデル' },
-    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', description: 'コスト効率重視' }
-  ],
-  anthropic: [
-    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (最新・推奨)', description: '最新の高性能モデル' },
-    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', description: '高速・軽量モデル' },
-    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus', description: '最高性能モデル' },
-    { value: 'claude-3-sonnet-20240229', label: 'Claude 3 Sonnet', description: 'バランス型モデル' }
-  ],
-  gemini: [
-    { value: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash (実験版・最新)', description: '最新の実験的モデル' },
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (推奨)', description: '高性能・長文脈対応' },
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', description: '高速・効率的' },
-    { value: 'gemini-1.0-pro', label: 'Gemini 1.0 Pro', description: '安定版モデル' }
-  ]
-};
 
 const SettingsView: React.FC = () => {
   const { user } = useAuth();
@@ -34,6 +14,8 @@ const SettingsView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'profile' | 'privacy' | 'ai'>('ai');
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
+  const [availableModels, setAvailableModels] = useState<{ [key: string]: { id: string; name: string; description?: string }[] }>({});
+  const [loadingModels, setLoadingModels] = useState(false);
 
   useEffect(() => {
     if (!userSettings && user) {
@@ -73,6 +55,30 @@ const SettingsView: React.FC = () => {
     updateSettings(settings);
     setHasChanges(false);
   };
+
+  const refreshModels = async () => {
+    if (!settings?.ai?.model.apiKey || !settings?.ai?.model.provider) return;
+    
+    setLoadingModels(true);
+    try {
+      const models = await fetchAvailableModels(settings.ai.model.provider, settings.ai.model.apiKey);
+      setAvailableModels(prev => ({
+        ...prev,
+        [settings.ai.model.provider]: models
+      }));
+    } catch (error) {
+      console.error('Failed to fetch models:', error);
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
+  // APIキーが変更されたら自動でモデル一覧を取得
+  useEffect(() => {
+    if (settings?.ai?.model.apiKey && settings?.ai?.model.provider) {
+      refreshModels();
+    }
+  }, [settings?.ai?.model.apiKey, settings?.ai?.model.provider]);
 
   return (
     <div className="flex h-full">
@@ -188,21 +194,32 @@ const SettingsView: React.FC = () => {
                   </div>
                   <div>
                     <label className="text-xs text-gray-500">モデル</label>
-                    <select
-                      value={settings?.ai?.model.model || ''}
-                      onChange={e => setModel({ model: e.target.value })}
-                      className="border rounded w-full px-2 py-1"
-                    >
-                      <option value="">モデルを選択してください</option>
-                      {AI_MODELS[settings?.ai?.model.provider || 'openai'].map(model => (
-                        <option key={model.value} value={model.value}>
-                          {model.label}
-                        </option>
-                      ))}
-                    </select>
-                    {settings?.ai?.model.model && (
+                    <div className="flex gap-2">
+                      <select
+                        value={settings?.ai?.model.model || ''}
+                        onChange={e => setModel({ model: e.target.value })}
+                        className="border rounded flex-1 px-2 py-1"
+                        disabled={loadingModels}
+                      >
+                        <option value="">モデルを選択してください</option>
+                        {availableModels[settings?.ai?.model.provider || 'openai']?.map(model => (
+                          <option key={model.id} value={model.id}>
+                            {model.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={refreshModels}
+                        disabled={loadingModels || !settings?.ai?.model.apiKey}
+                        className="px-2 py-1 border rounded hover:bg-gray-50 disabled:opacity-50"
+                        title="モデル一覧を更新"
+                      >
+                        <RefreshCw size={16} className={loadingModels ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+                    {settings?.ai?.model.model && availableModels[settings?.ai?.model.provider || 'openai'] && (
                       <div className="mt-1 text-xs text-gray-500">
-                        {AI_MODELS[settings.ai.model.provider].find(m => m.value === settings.ai.model.model)?.description}
+                        {availableModels[settings.ai.model.provider].find(m => m.id === settings.ai.model.model)?.description}
                       </div>
                     )}
                   </div>

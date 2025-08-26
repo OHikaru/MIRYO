@@ -2,6 +2,64 @@
 // 本番は /api/ai/chat などのAI Gatewayを介し、キーはサーバで管理してください。
 import { AIResponse, AIModelConfig, RetrievalConfig, KnowledgeDoc } from '../types';
 
+// 各プロバイダーからモデル一覧を動的取得
+export async function fetchAvailableModels(provider: string, apiKey?: string): Promise<{ id: string; name: string; description?: string }[]> {
+  if (!apiKey) return [];
+  
+  try {
+    switch (provider) {
+      case 'openai':
+        return await fetchOpenAIModels(apiKey);
+      case 'anthropic':
+        return await fetchAnthropicModels(apiKey);
+      case 'gemini':
+        return await fetchGeminiModels(apiKey);
+      default:
+        return [];
+    }
+  } catch (error) {
+    console.warn(`Failed to fetch models for ${provider}:`, error);
+    return [];
+  }
+}
+
+async function fetchOpenAIModels(apiKey: string) {
+  const response = await fetch('https://api.openai.com/v1/models', {
+    headers: { 'Authorization': `Bearer ${apiKey}` }
+  });
+  const data = await response.json();
+  return data.data
+    .filter((model: any) => model.id.includes('gpt') || model.id.includes('o1'))
+    .map((model: any) => ({
+      id: model.id,
+      name: model.id,
+      description: `Created: ${new Date(model.created * 1000).toLocaleDateString()}`
+    }))
+    .sort((a: any, b: any) => b.id.localeCompare(a.id));
+}
+
+async function fetchAnthropicModels(apiKey: string) {
+  // Anthropicは公開APIでモデル一覧を提供していないため、既知のモデルを返す
+  return [
+    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Latest)', description: '最新の高性能モデル' },
+    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', description: '高速・軽量モデル' },
+    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', description: '最高性能モデル' },
+    { id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet', description: 'バランス型モデル' }
+  ];
+}
+
+async function fetchGeminiModels(apiKey: string) {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+  const data = await response.json();
+  return data.models
+    ?.filter((model: any) => model.name.includes('gemini') && model.supportedGenerationMethods?.includes('generateContent'))
+    .map((model: any) => ({
+      id: model.name.replace('models/', ''),
+      name: model.displayName || model.name.replace('models/', ''),
+      description: model.description || ''
+    })) || [];
+}
+
 // 役割: NotebookLM的に「与えたソースのみで回答」→ここではUI側のメタ情報を付与。
 // 実際のRAGはサーバ側でベクタ検索/再ランクを実装してください。
 export async function aiChatUnified(params: {
