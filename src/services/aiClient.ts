@@ -195,17 +195,6 @@ export async function aiChatUnified(params: {
         };
       }
     }
-      return await r.json();
-    } catch (error) {
-      // AI Gatewayが利用できない場合はデモ応答を返す
-      return {
-        answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**デモ応答**: ご質問ありがとうございます。本番環境では適切なAI応答が提供されます。',
-        citations: [],
-        confidence: 0.5,
-        action: 'continue_ai',
-        reasons: ['AI Gateway接続エラー']
-      };
-    }
   }
 
   switch (config.provider) {
