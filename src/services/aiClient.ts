@@ -33,6 +33,9 @@ export async function fetchAvailableModels(
   endpointBase?: string,
   useBrowserKey: boolean = false
 ): Promise<ModelInfo[]> {
+  // Sanitize API key to prevent HTTP header issues
+  const sanitizedApiKey = apiKey?.trim().replace(/[^\x20-\x7E]/g, '');
+
   // 本番: ブラウザにキーを置かず、サーバのプロキシへ
   if (!useBrowserKey) {
     try {
@@ -49,17 +52,17 @@ export async function fetchAvailableModels(
     }
   }
 
-  if (!apiKey && provider !== 'gemini') {
+  if (!sanitizedApiKey && provider !== 'gemini') {
     return [];
   }
 
   switch (provider) {
     case 'openai':
-      return fetchOpenAIModels(apiKey!, endpointBase);
+      return fetchOpenAIModels(sanitizedApiKey!, endpointBase);
     case 'anthropic':
-      return fetchAnthropicModels(apiKey!, endpointBase);
+      return fetchAnthropicModels(sanitizedApiKey!, endpointBase);
     case 'gemini':
-      return fetchGeminiModels(apiKey); // Geminiはkeyがクエリに必要（ヘッダでも可）
+      return fetchGeminiModels(sanitizedApiKey); // Geminiはkeyがクエリに必要（ヘッダでも可）
     default:
       return [];
   }
@@ -128,10 +131,18 @@ async function fetchGeminiModels(apiKey?: string): Promise<ModelInfo[]> {
     return [];
   }
   
+  if (!apiKey) {
+    console.warn('Gemini API key not provided, returning empty model list');
+    return [];
+  }
+  
   const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
   url.searchParams.set('key', apiKey);
   const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
   if (!res.ok) {
+    if (res.status === 403) {
+      throw new Error(`Gemini API key is invalid or lacks permissions (403). Please check your API key in Google AI Studio.`);
+    }
     if (res.status === 403) {
       throw new Error(`Gemini API key is invalid or lacks permissions (403). Please check your API key in Google AI Studio.`);
     }
