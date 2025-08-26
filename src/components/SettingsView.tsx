@@ -79,6 +79,7 @@ const SettingsView: React.FC = () => {
       const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
       console.error('Failed to fetch models:', errorMessage);
       setModelError(errorMessage);
+      setModelError(errorMessage);
       setAvailableModels(prev => ({ ...prev, [currentProvider]: [] }));
     } finally {
       setLoadingModels(false);
@@ -247,6 +248,11 @@ const SettingsView: React.FC = () => {
                     {modelError && (
                       <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
                         <strong>エラー:</strong> {modelError}
+                        {currentProvider === 'openai' && modelError.includes('401') && (
+                          <div className="mt-1">
+                            <strong>解決方法:</strong> OpenAI Platform で有効なAPIキーを取得し、上記の「開発用APIキー」欄に入力してください。
+                          </div>
+                        )}
                         {currentProvider === 'gemini' && modelError.includes('403') && (
                           <div className="mt-1">
                             <strong>解決方法:</strong> Google AI Studio で有効なAPIキーを取得し、上記の「開発用APIキー」欄に入力してください。
@@ -265,9 +271,9 @@ const SettingsView: React.FC = () => {
                       placeholder="開発中のみブラウザに保持"
                     />
                     <div className="mt-1 text-xs text-red-600">※ 本番ではAI Gatewayでキー管理（フロント保持禁止）</div>
-                    {!settings?.ai?.model.apiKey && settings?.ai?.model.devKeyInBrowser && (
+                    {!currentApiKey && devKeyInBrowser && (
                       <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700">
-                        <strong>APIキーが未設定です。</strong> モデル一覧を取得するには、各プロバイダーの有効なAPIキーが必要です。
+                        <strong>APIキーが未設定です。</strong> モデル一覧を取得するには、{currentProvider === 'openai' ? 'OpenAI Platform' : currentProvider === 'gemini' ? 'Google AI Studio' : 'Anthropic Console'}で有効なAPIキーが必要です。
                       </div>
                     )}
                   </div>

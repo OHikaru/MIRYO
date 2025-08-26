@@ -72,7 +72,10 @@ async function fetchOpenAIModels(apiKey: string, endpointBase?: string): Promise
     headers: { 'Authorization': `Bearer ${apiKey}` }
   });
   if (!res.ok) {
-    throw new Error(`OpenAI models error ${res.status}`);
+    if (res.status === 401) {
+      throw new Error(`OpenAI API key is invalid or missing (401). Please check your API key in the OpenAI Platform.`);
+    }
+    throw new Error(`OpenAI models error ${res.status}: ${res.statusText}`);
   }
   const j = await res.json();
   const data: any[] = j?.data ?? [];
