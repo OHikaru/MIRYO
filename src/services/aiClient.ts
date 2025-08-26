@@ -180,6 +180,23 @@ export async function aiChatUnified(params: {
       if (!r.ok) throw new Error(`AI Gateway error: ${r.status}`);
       return await r.json();
     } catch (error) {
+      // AI Gatewayが利用できない場合で、開発モードかつAPIキーがある場合は直接呼び出し
+      if (config.devKeyInBrowser && config.apiKey) {
+        console.warn('AI Gateway unavailable, falling back to direct API call');
+        // 直接API呼び出しにフォールバック
+      } else {
+        // AI Gatewayが利用できない場合はデモ応答を返す
+        return {
+          answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**デモ応答**: ご質問ありがとうございます。本番環境では適切なAI応答が提供されます。',
+          citations: [],
+          confidence: 0.5,
+          action: 'continue_ai',
+          reasons: ['AI Gateway接続エラー']
+        };
+      }
+    }
+      return await r.json();
+    } catch (error) {
       // AI Gatewayが利用できない場合はデモ応答を返す
       return {
         answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**デモ応答**: ご質問ありがとうございます。本番環境では適切なAI応答が提供されます。',

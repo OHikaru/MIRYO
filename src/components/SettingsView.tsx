@@ -302,6 +302,12 @@ const SettingsView: React.FC = () => {
                         : '✅ 本番モード: サーバ側AI Gatewayを使用します'
                       }
                     </div>
+                    <div className="mt-1 text-xs text-gray-500">
+                      {settings?.ai?.model.devKeyInBrowser 
+                        ? '⚠️ 開発モード: APIキーがブラウザに保存されます' 
+                        : '✅ 本番モード: サーバ側AI Gatewayを使用します'
+                      }
+                    </div>
                   </div>
                 </div>
                 
@@ -347,6 +353,25 @@ const SettingsView: React.FC = () => {
                     />
                   </div>
                 </div>
+                
+                {!settings?.ai?.model.apiKey && settings?.ai?.model.devKeyInBrowser && (
+                  <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <div className="text-sm text-yellow-800">
+                      <strong>APIキーが未設定です</strong><br/>
+                      開発モードを使用する場合は、上記でAPIキーを設定してください。<br/>
+                      本番環境では AI Gateway を使用することを強く推奨します。
+                    </div>
+                  </div>
+                )}
+                
+                {settings?.ai?.model.apiKey && settings?.ai?.model.devKeyInBrowser && (
+                  <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="text-sm text-green-800">
+                      <strong>開発モード設定完了</strong><br/>
+                      APIキーが設定されているため、AIチャットが利用可能です。
+                    </div>
+                  </div>
+                )}
               </div>
 
               <KnowledgeBaseManager />
