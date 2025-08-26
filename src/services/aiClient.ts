@@ -1,208 +1,117 @@
-// REVISED: マルチAIプロバイダの「モデル一覧取得」と「チャット呼び出し」を統合。
-// 変更点:
-//  - fetchAvailableModels(provider, apiKey, endpointBase?) を追加（OpenAI/Anthropic/Gemini対応）
-//  - devKeyInBrowser=false の場合は /api/ai/models にフォールバック（本番用プロキシ）
-//  - OpenAI: GET https://api.openai.com/v1/models（Bearer）で一覧取得（公式ドキュメント）。 
-//  - Anthropic: GET https://api.anthropic.com/v1/models（x-api-key + anthropic-version）で一覧取得（公式）。
-//  - Gemini:   GET https://generativelanguage.googleapis.com/v1beta/models?key=API_KEY で一覧取得（公式）。
-//  - aiChatUnified は Gateway優先、失敗時は **APIキーがあれば直叩きへ安全表示つきフォールバック**。
-//  - Geminiモデル取得の重複 if を整理。
-//
-// 参照:
-//  - OpenAI List models: https://platform.openai.com/docs/api-reference/models/list
-//  - Anthropic List models: https://docs.anthropic.com/en/api/models-list
-//  - Gemini Models endpoint: https://ai.google.dev/api/models
+// src/services/aiClient.ts
+// 改訂点:
+// - /api 呼び出し失敗（TypeError: Failed to fetch 等）時に、UIへ「原因となる例外メッセージ」を返す
+// - Gatewayが落ちていても、ブラウザにAPIキーがあれば直叩きフォールバック
+// - fetchAvailableModels でも詳細メッセージを投げる
 import { AIResponse, AIModelConfig, RetrievalConfig, KnowledgeDoc } from '../types';
 
 export type Provider = 'openai' | 'anthropic' | 'gemini';
 
 export interface ModelInfo {
-  id: string;                 // APIで指定するモデルID（例: gpt-4o, claude-3-5-sonnet-latest, gemini-2.0-flash-exp）
-  name: string;               // 表示名（displayName 等）
-  description?: string;       // 説明
-  inputModalities?: string[]; // テキスト/画像/音声など（得られる場合）
-  outputModalities?: string[];// テキスト/画像/音声など（得られる場合）
-  contextWindow?: number;     // 入力トークン上限（得られる場合）
+  id: string;
+  name: string;
+  description?: string;
+  inputModalities?: string[];
+  outputModalities?: string[];
+  contextWindow?: number;
 }
 
-// ------------------------------------------------------------
-// モデル一覧の取得（開発時はフロント直叩き、本番はサーバのプロキシを推奨）
-// ------------------------------------------------------------
+function dedupeById<T extends { id: string }>(list: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const m of list) if (!seen.has(m.id)) { seen.add(m.id); out.push(m); }
+  return out;
+}
+
 export async function fetchAvailableModels(
   provider: Provider,
   apiKey?: string,
   endpointBase?: string,
   useBrowserKey: boolean = false
 ): Promise<ModelInfo[]> {
-  // Sanitize API key to prevent HTTP header issues
   const sanitizedApiKey = apiKey?.trim().replace(/[^\x20-\x7E]/g, '');
 
-  // 本番: ブラウザにキーを置かず、サーバのプロキシへ
+  // Gateway経由（本番推奨）
   if (!useBrowserKey) {
     try {
-      const r = await fetch(`/api/ai/models?provider=${encodeURIComponent(provider)}`, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' }
-      });
-      if (r.ok) {
-        const j = await r.json();
-        // サーバからの生レスポンスを各プロバイダの形式に合わせて整形
-        if (provider === 'openai') {
-          const data: any[] = j?.data ?? [];
-          const chatLike = /^(gpt|o\d|o[34]|omni|gpt-4|gpt-4o|gpt-4\.1|gpt-4o-mini)/i;
-          const mapped: ModelInfo[] = data
-            .filter((m: any) => typeof m?.id === 'string')
-            .map((m: any) => ({ id: m.id, name: m.id, description: m.root ? `root:${m.root}` : undefined }))
-            .filter((m: any) => chatLike.test(m.id));
-          const order = ['o4', 'o3', 'omni', 'gpt-4.1', 'gpt-4o', 'gpt-4o-mini', 'gpt-4'];
-          mapped.sort((a,b) => {
-            const ia = order.findIndex(k => a.id.startsWith(k));
-            const ib = order.findIndex(k => b.id.startsWith(k));
-            return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib) || a.id.localeCompare(b.id);
-          });
-          return dedupeById(mapped);
-        }
-        if (provider === 'anthropic') {
-          const data: any[] = j?.data ?? [];
-          const mapped: ModelInfo[] = data.map((m: any) => ({
-            id: m?.id,
-            name: m?.display_name || m?.id,
-            description: m?.description,
-            inputModalities: m?.input_modalities || [],
-            outputModalities: m?.output_modalities || [],
-            contextWindow: typeof m?.context_window === 'number' ? m.context_window : undefined
-          })).filter(m => !!m.id);
-          return dedupeById(mapped);
-        }
-        if (provider === 'gemini') {
-          const models: any[] = j?.models ?? [];
-          const mapped: ModelInfo[] = models.map((m: any) => ({
-            id: m?.name,                       // 例: models/gemini-2.0-flash
-            name: m?.displayName || m?.name,   // 例: Gemini 2.0 Flash
-            description: m?.description,
-            inputModalities: m?.inputModalities || m?.supportedGenerationMethods,
-            outputModalities: m?.outputModalities,
-            contextWindow: m?.inputTokenLimit
-          })).filter(m => !!m.id);
-          return dedupeById(mapped);
-        }
+      const r = await fetch(`/api/ai/models?provider=${encodeURIComponent(provider)}`, { method: 'GET', headers: { 'Accept': 'application/json' } });
+      if (!r.ok) throw new Error(`Gateway responded ${r.status}`);
+      const j = await r.json();
+      if (provider === 'openai') {
+        const data: any[] = j?.data ?? [];
+        const chatLike = /^(gpt|o\d|o[34]|omni|gpt-4|gpt-4o|gpt-4\.1|gpt-4o-mini)/i;
+        const mapped: ModelInfo[] = data
+          .filter((m: any) => typeof m?.id === 'string')
+          .map((m: any) => ({ id: m.id, name: m.id, description: m.root ? `root:${m.root}` : undefined }))
+          .filter((m: any) => chatLike.test(m.id));
+        const order = ['o4', 'o3', 'omni', 'gpt-4.1', 'gpt-4o', 'gpt-4o-mini', 'gpt-4'];
+        mapped.sort((a,b) => {
+          const ia = order.findIndex(k => a.id.startsWith(k));
+          const ib = order.findIndex(k => b.id.startsWith(k));
+          return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib) || a.id.localeCompare(b.id);
+        });
+        return dedupeById(mapped);
       }
-    } catch {
-      console.warn('AI models proxy unavailable, falling back to direct API (dev only).');
+      if (provider === 'anthropic') {
+        const data: any[] = j?.data ?? [];
+        return dedupeById(data.map((m: any) => ({
+          id: m?.id, name: m?.display_name || m?.id, description: m?.description,
+          inputModalities: m?.input_modalities || [], outputModalities: m?.output_modalities || [],
+          contextWindow: typeof m?.context_window === 'number' ? m.context_window : undefined
+        })).filter((m: any) => !!m.id));
+      }
+      if (provider === 'gemini') {
+        const models: any[] = j?.models ?? [];
+        return dedupeById(models.map((m: any) => ({
+          id: m?.name, name: m?.displayName || m?.name, description: m?.description,
+          inputModalities: m?.inputModalities || m?.supportedGenerationMethods, outputModalities: m?.outputModalities,
+          contextWindow: m?.inputTokenLimit
+        })).filter((m: any) => !!m.id));
+      }
+      return [];
+    } catch (e) {
+      // ここで "TypeError: Failed to fetch" 等をUIへ伝える
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`AI Gateway に接続できません: ${msg}（サーバ起動/ポート/プロキシを確認）`);
     }
   }
 
-  if (!sanitizedApiKey) {
-    console.warn('No API key provided for direct API call');
-    return [];
-  }
-
+  // 直叩き（開発用）
+  if (!sanitizedApiKey && provider !== 'gemini') return [];
   switch (provider) {
-    case 'openai':
-      return fetchOpenAIModels(sanitizedApiKey, endpointBase);
-    case 'anthropic':
-      return fetchAnthropicModels(sanitizedApiKey, endpointBase);
-    case 'gemini':
-      return fetchGeminiModels(sanitizedApiKey);
+    case 'openai': {
+      const base = endpointBase || 'https://api.openai.com';
+      const r = await fetch(`${base}/v1/models`, { headers: { 'Authorization': `Bearer ${sanitizedApiKey}` } });
+      if (!r.ok) throw new Error(`OpenAI models error ${r.status}`);
+      const j = await r.json();
+      const data: any[] = j?.data ?? [];
+      const chatLike = /^(gpt|o\d|o[34]|omni|gpt-4|gpt-4o|gpt-4\.1|gpt-4o-mini)/i;
+      const mapped = data.filter(m => typeof m?.id === 'string').map((m: any) => ({ id: m.id, name: m.id }));
+      return dedupeById(mapped.filter((m: any) => chatLike.test(m.id)));
+    }
+    case 'anthropic': {
+      const base = endpointBase || 'https://api.anthropic.com';
+      const r = await fetch(`${base}/v1/models`, { headers: { 'x-api-key': sanitizedApiKey!, 'anthropic-version': '2023-06-01' } });
+      if (!r.ok) throw new Error(`Anthropic models error ${r.status}`);
+      const j = await r.json();
+      const data: any[] = j?.data ?? [];
+      return dedupeById(data.map((m: any) => ({ id: m?.id, name: m?.display_name || m?.id })).filter((m: any) => !!m.id));
+    }
+    case 'gemini': {
+      if (!sanitizedApiKey) return [];
+      const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
+      url.searchParams.set('key', sanitizedApiKey);
+      const r = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) throw new Error(`Gemini models error ${r.status}`);
+      const j = await r.json();
+      const models: any[] = j?.models ?? [];
+      return dedupeById(models.map((m: any) => ({ id: m?.name, name: m?.displayName || m?.name })).filter((m: any) => !!m.id));
+    }
     default:
       return [];
   }
 }
 
-// --- OpenAI: GET /v1/models --------------------------------
-async function fetchOpenAIModels(apiKey: string, endpointBase?: string): Promise<ModelInfo[]> {
-  const base = endpointBase || 'https://api.openai.com';
-  const res = await fetch(`${base}/v1/models`, {
-    headers: { 'Authorization': `Bearer ${apiKey}` }
-  });
-  if (!res.ok) {
-    if (res.status === 401) {
-      throw new Error(`OpenAI API key is invalid or missing (401). Please check your API key in the OpenAI Platform.`);
-    }
-    throw new Error(`OpenAI models error ${res.status}`);
-  }
-  const j = await res.json();
-  const data: any[] = j?.data ?? [];
-  const chatLike = /^(gpt|o\d|o[34]|omni|gpt-4|gpt-4o|gpt-4\.1|gpt-4o-mini)/i;
-  const mapped: ModelInfo[] = data
-    .filter(m => typeof m?.id === 'string')
-    .map(m => ({ id: m.id, name: m.id, description: m.root ? `root:${m.root}` : undefined }))
-    .filter(m => chatLike.test(m.id));
-  const order = ['o4', 'o3', 'omni', 'gpt-4.1', 'gpt-4o', 'gpt-4o-mini', 'gpt-4'];
-  mapped.sort((a,b) => {
-    const ia = order.findIndex(k => a.id.startsWith(k));
-    const ib = order.findIndex(k => b.id.startsWith(k));
-    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib) || a.id.localeCompare(b.id);
-  });
-  return dedupeById(mapped);
-}
-
-// --- Anthropic: GET /v1/models ------------------------------
-async function fetchAnthropicModels(apiKey: string, endpointBase?: string): Promise<ModelInfo[]> {
-  const base = endpointBase || 'https://api.anthropic.com';
-  const res = await fetch(`${base}/v1/models`, {
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01'
-    }
-  });
-  if (!res.ok) {
-    throw new Error(`Anthropic models error ${res.status}`);
-  }
-  const j = await res.json();
-  const data: any[] = j?.data ?? [];
-  const mapped: ModelInfo[] = data.map((m: any) => ({
-    id: m?.id,
-    name: m?.display_name || m?.id,
-    description: m?.description,
-    inputModalities: m?.input_modalities || [],
-    outputModalities: m?.output_modalities || [],
-    contextWindow: typeof m?.context_window === 'number' ? m.context_window : undefined
-  })).filter(m => !!m.id);
-  return dedupeById(mapped);
-}
-
-// --- Gemini: GET /v1beta/models -----------------------------
-async function fetchGeminiModels(apiKey?: string): Promise<ModelInfo[]> {
-  if (!apiKey) {
-    console.warn('Gemini API key not provided, returning empty model list');
-    return [];
-  }
-  
-  const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
-  url.searchParams.set('key', apiKey);
-  const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
-  if (!res.ok) {
-    if (res.status === 403) {
-      throw new Error(`Gemini API key is invalid or lacks permissions (403). Please check your API key in Google AI Studio.`);
-    }
-    throw new Error(`Gemini models error ${res.status}`);
-  }
-  const j = await res.json();
-  const models: any[] = j?.models ?? [];
-  const mapped: ModelInfo[] = models.map((m: any) => ({
-    id: m?.name,                       // 例: models/gemini-2.0-flash-exp
-    name: m?.displayName || m?.name,   // 例: Gemini 2.0 Flash Experimental
-    description: m?.description,
-    inputModalities: m?.inputModalities || m?.supportedGenerationMethods,
-    outputModalities: m?.outputModalities,
-    contextWindow: m?.inputTokenLimit
-  })).filter(m => !!m.id);
-  return dedupeById(mapped);
-}
-
-function dedupeById(list: ModelInfo[]): ModelInfo[] {
-  const seen = new Set<string>();
-  const out: ModelInfo[] = [];
-  for (const m of list) {
-    if (!seen.has(m.id)) { seen.add(m.id); out.push(m); }
-  }
-  return out;
-}
-
-// ------------------------------------------------------------
-// チャット統合呼び出し（Gateway優先・安全フォールバック）
-// ------------------------------------------------------------
 export async function aiChatUnified(params: {
   config: AIModelConfig;
   messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
@@ -212,140 +121,94 @@ export async function aiChatUnified(params: {
   const { config, messages } = params;
   const hasBrowserKey = !!config.apiKey;
 
-  // 開発モードが有効で、APIキーがある場合は直接API呼び出しを優先
-  if (config.devKeyInBrowser && hasBrowserKey) {
-    console.log('Development mode: Using direct API call with browser-held key');
-    return callProviderDirectly(config, messages);
-  }
-
-  // 本番モード: Gateway経由でRAGや監査・レート制御を一元化
-  try {
-    const r = await fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params)
-    });
-    if (!r.ok) throw new Error(`AI Gateway error: ${r.status}`);
-    return await r.json();
-  } catch (error) {
-    // Gatewayが落ちているが、ブラウザ側にAPIキーがあるなら「開発用の一時フォールバック」で直叩き
-    if (hasBrowserKey) {
-      console.warn('AI Gateway unavailable; falling back to direct provider call using browser-held API key (dev fallback).');
-      return callProviderDirectly(config, messages);
-    } else {
-      // APIキーもなくGatewayも無い → デモ応答
-      return {
-        answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**解決方法:**\n1. 設定画面で「開発モード」を `true` に設定\n2. 有効なAPIキーを入力\n3. 保存ボタンをクリック',
-        citations: [],
-        confidence: 0.5,
-        action: 'continue_ai',
-        reasons: ['AI Gateway接続エラー']
-      };
+  if (!config.devKeyInBrowser) {
+    // 本番: Gateway優先
+    try {
+      const r = await fetch('/api/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(`Gateway ${r.status} ${j?.error ? `- ${j.error}` : ''}`);
+      }
+      return await r.json();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (hasBrowserKey) {
+        console.warn('AI Gateway unreachable; falling back to direct provider call.', msg);
+      } else {
+        return {
+          answer_markdown: `AI Gateway に接続できませんでした（${msg}）。\n- サーバを起動: \`npm run server\`\n- または設定で「開発モード（ブラウザにAPIキー）」を ON にしてください。`,
+          citations: [],
+          confidence: 0.4,
+          action: 'continue_ai',
+          reasons: ['gateway_unreachable']
+        };
+      }
     }
   }
-}
 
-async function callProviderDirectly(config: AIModelConfig, messages: { role: string; content: string }[]): Promise<AIResponse> {
   switch (config.provider) {
-    case 'openai':
-      return callOpenAI(config, messages);
-    case 'anthropic':
-      return callAnthropic(config, messages);
-    case 'gemini':
-      return callGemini(config, messages);
-    default:
-      throw new Error('Unknown provider');
+    case 'openai':  return callOpenAI(config, messages);
+    case 'anthropic': return callAnthropic(config, messages);
+    case 'gemini':  return callGemini(config, messages);
+    default: throw new Error('Unknown provider');
   }
 }
 
-// --- OpenAI Chat Completions API -----------------------------------
 async function callOpenAI(config: AIModelConfig, messages: { role: string; content: string }[]): Promise<AIResponse> {
-  const r = await fetch(`${config.endpointBase || 'https://api.openai.com'}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${config.apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: config.model || 'gpt-4o-mini',
-      messages: messages.map(m => ({ role: m.role, content: m.content })),
-      max_tokens: 1000
-    })
-  });
-  
-  if (!r.ok) {
-    const errorText = await r.text();
-    throw new Error(`OpenAI API error ${r.status}: ${errorText}`);
+  try {
+    const r = await fetch(`${config.endpointBase || 'https://api.openai.com'}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        model: config.model || 'gpt-4o-mini', 
+        messages: messages.map(m => ({ role: m.role, content: m.content })),
+        max_tokens: 1000
+      })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(`OpenAI ${r.status} - ${j?.error?.message || 'unknown error'}`);
+    const text = j?.choices?.[0]?.message?.content ?? JSON.stringify(j);
+    return { answer_markdown: text, citations: [], confidence: 0.75, action: 'continue_ai', reasons: [] };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { answer_markdown: `OpenAI呼び出しに失敗: ${msg}`, citations: [], confidence: 0.3, action: 'continue_ai', reasons: ['provider_call_failed'] };
   }
-  
-  const j = await r.json();
-  const text = j?.choices?.[0]?.message?.content ?? 'No response from OpenAI';
-  return {
-    answer_markdown: text,
-    citations: [],
-    confidence: 0.75,
-    action: 'continue_ai',
-    reasons: []
-  };
 }
 
-// --- Anthropic Messages API ---------------------------------
 async function callAnthropic(config: AIModelConfig, messages: { role: string; content: string }[]): Promise<AIResponse> {
   const userContent = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
   const systemMsg = messages.find(m => m.role === 'system')?.content;
-  const r = await fetch(`${config.endpointBase || 'https://api.anthropic.com'}/v1/messages`, {
-    method: 'POST',
-    headers: {
-      'x-api-key': `${config.apiKey}`,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: config.model || 'claude-3-5-sonnet-latest',
-      system: systemMsg,
-      messages: userContent,
-      max_tokens: 1024
-    })
-  });
-  
-  if (!r.ok) {
-    const errorText = await r.text();
-    throw new Error(`Anthropic API error ${r.status}: ${errorText}`);
+  try {
+    const r = await fetch(`${config.endpointBase || 'https://api.anthropic.com'}/v1/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': `${config.apiKey}`, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: config.model || 'claude-3-5-sonnet-latest', system: systemMsg, messages: userContent, max_tokens: 1024 })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(`Anthropic ${r.status} - ${j?.error?.message || 'unknown error'}`);
+    const text = j?.content?.[0]?.text ?? JSON.stringify(j);
+    return { answer_markdown: text, citations: [], confidence: 0.75, action: 'continue_ai', reasons: [] };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { answer_markdown: `Anthropic呼び出しに失敗: ${msg}`, citations: [], confidence: 0.3, action: 'continue_ai', reasons: ['provider_call_failed'] };
   }
-  
-  const j = await r.json();
-  const text = j?.content?.[0]?.text ?? 'No response from Anthropic';
-  return {
-    answer_markdown: text,
-    citations: [],
-    confidence: 0.75,
-    action: 'continue_ai',
-    reasons: []
-  };
 }
 
-// --- Gemini generateContent ---------------------------------
 async function callGemini(config: AIModelConfig, messages: { role: string; content: string }[]): Promise<AIResponse> {
   const input = messages.map(m => ({ role: m.role, parts: [{ text: m.content }] }));
   const model = config.model || 'models/gemini-2.0-flash';
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': `${config.apiKey}` },
-    body: JSON.stringify({ contents: input })
-  });
-  
-  if (!r.ok) {
-    const errorText = await r.text();
-    throw new Error(`Gemini API error ${r.status}: ${errorText}`);
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': `${config.apiKey}` },
+      body: JSON.stringify({ contents: input })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(`Gemini ${r.status} - ${j?.error?.message || 'unknown error'}`);
+    const text = j?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ?? JSON.stringify(j);
+    return { answer_markdown: text, citations: [], confidence: 0.75, action: 'continue_ai', reasons: [] };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { answer_markdown: `Gemini呼び出しに失敗: ${msg}`, citations: [], confidence: 0.3, action: 'continue_ai', reasons: ['provider_call_failed'] };
   }
-  
-  const j = await r.json();
-  const text = j?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ?? 'No response from Gemini';
-  return {
-    answer_markdown: text,
-    citations: [],
-    confidence: 0.75,
-    action: 'continue_ai',
-    reasons: []
-  };
 }
