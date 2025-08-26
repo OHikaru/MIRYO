@@ -250,6 +250,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setScreenSharing,
       userSettings,
       updateSettings,
+      rtcRooms: [],
+      createRTCRoom: () => {},
+      joinRTCRoom: () => {},
+      aiResponses: [],
+      sendAIQuery: async () => ({ id: '', query: '', response: '', confidence: 0, timestamp: new Date(), sources: [] }),
+      consentTemplates: [],
+      consentRecords: [],
+      createConsentRecord: () => {},
+      handoffSessions: [],
+      createHandoff: () => {},
+      webrtcStats: [],
+      auditEvents: [],
+      recordWebRTCStats: () => {},
+      recordAuditEvent: () => {},
     }}>
       {children}
     </AppContext.Provider>
