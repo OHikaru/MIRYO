@@ -6,6 +6,28 @@ import { useApp } from '../contexts/AppContext';
 import { AIProvider, AISettings, UserSettings } from '../types';
 import KnowledgeBaseManager from './KnowledgeBaseManager';
 
+// 最新のモデル情報（2025年1月時点）
+const AI_MODELS = {
+  openai: [
+    { value: 'gpt-4o', label: 'GPT-4o (最新・推奨)', description: '最新の高性能モデル' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini', description: '軽量・高速モデル' },
+    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', description: '従来の高性能モデル' },
+    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', description: 'コスト効率重視' }
+  ],
+  anthropic: [
+    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (最新・推奨)', description: '最新の高性能モデル' },
+    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', description: '高速・軽量モデル' },
+    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus', description: '最高性能モデル' },
+    { value: 'claude-3-sonnet-20240229', label: 'Claude 3 Sonnet', description: 'バランス型モデル' }
+  ],
+  gemini: [
+    { value: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash (実験版・最新)', description: '最新の実験的モデル' },
+    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (推奨)', description: '高性能・長文脈対応' },
+    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', description: '高速・効率的' },
+    { value: 'gemini-1.0-pro', label: 'Gemini 1.0 Pro', description: '安定版モデル' }
+  ]
+};
+
 const SettingsView: React.FC = () => {
   const { user } = useAuth();
   const { userSettings, updateSettings } = useApp();
@@ -21,7 +43,7 @@ const SettingsView: React.FC = () => {
         notifications: true,
         privacyLevel: 'standard',
         ai: {
-          model: { provider: 'openai', model: 'gpt-4.1-mini', endpointBase: 'https://api.openai.com', devKeyInBrowser: false },
+          model: { provider: 'openai', model: 'gpt-4o-mini', endpointBase: 'https://api.openai.com', devKeyInBrowser: false },
           retrieval: { topK: 5, threshold: 0.45, scopes: ['clinic_docs', 'faq', 'policies'] }
         }
       });
@@ -166,12 +188,23 @@ const SettingsView: React.FC = () => {
                   </div>
                   <div>
                     <label className="text-xs text-gray-500">モデル</label>
-                    <input
+                    <select
                       value={settings?.ai?.model.model || ''}
                       onChange={e => setModel({ model: e.target.value })}
                       className="border rounded w-full px-2 py-1"
-                      placeholder="例: gpt-4.1-mini / claude-3-5-sonnet-latest / gemini-2.5-flash"
-                    />
+                    >
+                      <option value="">モデルを選択してください</option>
+                      {AI_MODELS[settings?.ai?.model.provider || 'openai'].map(model => (
+                        <option key={model.value} value={model.value}>
+                          {model.label}
+                        </option>
+                      ))}
+                    </select>
+                    {settings?.ai?.model.model && (
+                      <div className="mt-1 text-xs text-gray-500">
+                        {AI_MODELS[settings.ai.model.provider].find(m => m.value === settings.ai.model.model)?.description}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="text-xs text-gray-500 flex items-center gap-2"><KeyRound size={14}/> 開発用APIキー（本番禁止）</label>
@@ -203,8 +236,24 @@ const SettingsView: React.FC = () => {
                       <option value="false">false（推奨）</option>
                       <option value="true">true（デモ用）</option>
                     </select>
+                    <div className="mt-1 text-xs text-gray-500">
+                      {settings?.ai?.model.devKeyInBrowser 
+                        ? '⚠️ 開発モード: APIキーがブラウザに保存されます' 
+                        : '✅ 本番モード: サーバ側AI Gatewayを使用します'
+                      }
+                    </div>
                   </div>
                 </div>
+                
+                {!settings?.ai?.model.apiKey && settings?.ai?.model.devKeyInBrowser && (
+                  <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <div className="text-sm text-yellow-800">
+                      <strong>APIキーが未設定です</strong><br/>
+                      開発モードを使用する場合は、上記でAPIキーを設定してください。<br/>
+                      本番環境では AI Gateway を使用することを強く推奨します。
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="p-4 border rounded bg-white space-y-3">

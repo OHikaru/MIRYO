@@ -11,15 +11,26 @@ export async function aiChatUnified(params: {
   knowledgeDocs: KnowledgeDoc[];
 }): Promise<AIResponse> {
   const { config, messages } = params;
-  if (!config.devKeyInBrowser) {
+  if (!config.devKeyInBrowser || !config.apiKey) {
     // サーバ側AI Gateway想定
-    const r = await fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params)
-    });
-    if (!r.ok) throw new Error(`AI Gateway error: ${r.status}`);
-    return await r.json();
+    try {
+      const r = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      });
+      if (!r.ok) throw new Error(`AI Gateway error: ${r.status}`);
+      return await r.json();
+    } catch (error) {
+      // AI Gatewayが利用できない場合はデモ応答を返す
+      return {
+        answer_markdown: 'AI Gatewayに接続できません。開発モードでAPIキーを設定するか、サーバ側のAI Gatewayを起動してください。\n\n**デモ応答**: ご質問ありがとうございます。本番環境では適切なAI応答が提供されます。',
+        citations: [],
+        confidence: 0.5,
+        action: 'continue_ai',
+        reasons: ['AI Gateway接続エラー']
+      };
+    }
   }
 
   // --- 以下、開発モードのみ: 直接各社API ---
