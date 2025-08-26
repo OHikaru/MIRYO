@@ -52,7 +52,7 @@ export async function fetchAvailableModels(
     }
   }
 
-  // For development mode, require API key for all providers
+  // For development mode, require API key
   if (!sanitizedApiKey) {
     console.warn(`No API key provided for ${provider} in development mode`);
     return [];
@@ -64,7 +64,7 @@ export async function fetchAvailableModels(
     case 'anthropic':
       return fetchAnthropicModels(sanitizedApiKey!, endpointBase);
     case 'gemini':
-      return fetchGeminiModels(sanitizedApiKey); // Geminiはkeyがクエリに必要（ヘッダでも可）
+      return fetchGeminiModels(sanitizedApiKey);
     default:
       return [];
   }
