@@ -36,8 +36,8 @@ export async function fetchAvailableModels(
   // Sanitize API key to prevent HTTP header issues
   const sanitizedApiKey = apiKey?.trim().replace(/[^\x20-\x7E]/g, '');
 
-  // 本番: ブラウザにキーを置かず、サーバのプロキシへ
-  if (!useBrowserKey) {
+  // 本番: ブラウザにキーを置かず、サーバのプロキシへ（開発モードでない場合）
+  if (!useBrowserKey || !sanitizedApiKey) {
     try {
       const r = await fetch(`/api/ai/models?provider=${encodeURIComponent(provider)}`, {
         method: 'GET',
@@ -47,12 +47,21 @@ export async function fetchAvailableModels(
         const data = await r.json();
         return (data?.models || []) as ModelInfo[];
       }
+      // If proxy fails and we're not in dev mode, return empty array
+      if (!useBrowserKey) {
+        console.warn(`AI models proxy failed for ${provider}, and not in development mode`);
+        return [];
+      }
     } catch (error) {
-      console.warn('AI models proxy unavailable, falling back to direct API (dev only).');
+      console.warn(`AI models proxy unavailable for ${provider}, falling back to direct API (dev only).`);
+      // If proxy fails and we're not in dev mode, return empty array
+      if (!useBrowserKey || !sanitizedApiKey) {
+        return [];
+      }
     }
   }
 
-  // For development mode, require API key
+  // Development mode: require API key for direct calls
   if (!sanitizedApiKey) {
     console.warn(`No API key provided for ${provider} in development mode`);
     return [];
@@ -132,12 +141,7 @@ async function fetchGeminiModels(apiKey?: string): Promise<ModelInfo[]> {
     console.warn('Gemini API key not provided, returning empty model list');
     return [];
   }
-  
-  if (!apiKey) {
-    console.warn('Gemini API key not provided, returning empty model list');
-    return [];
-  }
-  
+
   const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
   url.searchParams.set('key', apiKey);
   const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
@@ -145,8 +149,8 @@ async function fetchGeminiModels(apiKey?: string): Promise<ModelInfo[]> {
     if (res.status === 403) {
       throw new Error(`Gemini API key is invalid or lacks permissions (403). Please check your API key in Google AI Studio.`);
     }
-    if (res.status === 403) {
-      throw new Error(`Gemini API key is invalid or lacks permissions (403). Please check your API key in Google AI Studio.`);
+    if (res.status === 400) {
+      throw new Error(`Gemini API request was malformed (400). Please check your API key and try again.`);
     }
     throw new Error(`Gemini models error ${res.status}: ${res.statusText}`);
   }
@@ -182,7 +186,11 @@ export async function aiChatUnified(params: {
   knowledgeDocs: KnowledgeDoc[];
 }): Promise<AIResponse> {
   const { config, messages } = params;
-  if (!config.devKeyInBrowser || !config.apiKey) {
+  
+  // Sanitize API key
+  const sanitizedApiKey = config.apiKey?.trim().replace(/[^\x20-\x7E]/g, '');
+  
+  if (!config.devKeyInBrowser || !sanitizedApiKey) {
     // 本番はGateway経由でRAGや監査・レート制御を一元化
     try {
       const r = await fetch('/api/ai/chat', {
@@ -194,7 +202,7 @@ export async function aiChatUnified(params: {
       return await r.json();
     } catch (error) {
       // AI Gatewayが利用できない場合で、開発モードかつAPIキーがある場合は直接呼び出し
-      if (config.devKeyInBrowser && config.apiKey) {
+      if (config.devKeyInBrowser && sanitizedApiKey) {
         console.warn('AI Gateway unavailable, falling back to direct API call');
         // 直接API呼び出しにフォールバック
       } else {
@@ -210,13 +218,16 @@ export async function aiChatUnified(params: {
     }
   }
 
+  // Use sanitized API key for direct calls
+  const configWithSanitizedKey = { ...config, apiKey: sanitizedApiKey };
+  
   switch (config.provider) {
     case 'openai':
-      return callOpenAI(config, messages);
+      return callOpenAI(configWithSanitizedKey, messages);
     case 'anthropic':
-      return callAnthropic(config, messages);
+      return callAnthropic(configWithSanitizedKey, messages);
     case 'gemini':
-      return callGemini(config, messages);
+      return callGemini(configWithSanitizedKey, messages);
     default:
       throw new Error('Unknown provider');
   }
