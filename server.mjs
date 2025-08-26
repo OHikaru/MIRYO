@@ -28,7 +28,7 @@ try {
   pdfParse = mod.default || mod;
   console.log('[Gateway] pdf-parse loaded successfully');
 } catch (e) {
-  console.warn('[Gateway] pdf-parse could not be loaded. PDF text extraction disabled.');
+  console.warn('[Gateway] pdf-parse could not be loaded. PDF text extraction disabled.', e.message);
   pdfParse = null;
 }
 
