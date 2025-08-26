@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Send, Paperclip, Phone, Video, Monitor, MoreVertical, AlertTriangle, MessageSquare } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
-import VideoCallInterface from './VideoCallInterface';
+import EnhancedVideoCall from './EnhancedVideoCall';
 import { formatDistanceToNow } from 'date-fns';
 
 const ChatInterface: React.FC = () => {
@@ -125,7 +125,7 @@ const ChatInterface: React.FC = () => {
       </div>
 
       {/* Video Call Interface */}
-      {isVideoCallActive && <VideoCallInterface />}
+      {isVideoCallActive && <EnhancedVideoCall />}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">

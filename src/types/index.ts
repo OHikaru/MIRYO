@@ -122,3 +122,143 @@ export interface UserSettings {
     loginNotifications: boolean;
   };
 }
+
+// Enhanced types based on C4 architecture and OpenAPI 3.1 spec
+
+export interface RTCRoom {
+  id: string;
+  title: string;
+  participants: RTCParticipant[];
+  createdAt: Date;
+  region?: string;
+  e2ee: boolean;
+  recording: boolean;
+  status: 'active' | 'ended';
+}
+
+export interface RTCParticipant {
+  id: string;
+  role: 'patient' | 'practitioner' | 'staff';
+  joinedAt?: Date;
+  isConnected: boolean;
+}
+
+export interface JoinToken {
+  roomId: string;
+  token: string;
+  expiresAt: Date;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  timestamp: Date;
+  citations?: Citation[];
+  confidence?: number;
+  escalated?: boolean;
+}
+
+export interface Citation {
+  sourceId: string;
+  uri: string;
+  span: string;
+}
+
+export interface RAGQuery {
+  query: string;
+  topK: number;
+  rerank: boolean;
+  scope: ('clinic_docs' | 'consent_templates' | 'faq' | 'policies' | 'ehr_subset')[];
+}
+
+export interface RAGResult {
+  docId: string;
+  score: number;
+  uri: string;
+  snippet: string;
+}
+
+export interface TriageAssessment {
+  severity: 'emergent' | 'urgent' | 'routine' | 'unknown';
+  uncertainty: number;
+  reasons: string[];
+  action: 'continue_ai' | 'handoff_human' | 'call_emergency';
+  citations: string[];
+}
+
+export interface HandoffSession {
+  id: string;
+  status: 'pending' | 'assigned' | 'active' | 'closed';
+  assignedTo?: string;
+  reason: string;
+  context: Record<string, any>;
+  createdAt: Date;
+}
+
+export interface ConsentTemplate {
+  id: string;
+  title: string;
+  version: string;
+  locale: string;
+  contentMd: string;
+  signatureType: 'qes' | 'aes' | 'ses';
+}
+
+export interface ConsentRecord {
+  id: string;
+  templateId: string;
+  subjectId: string;
+  status: 'pending' | 'signed' | 'revoked';
+  signedAt?: Date;
+  evidence?: {
+    signaturePdfUri: string;
+    auditLogUri: string;
+  };
+}
+
+export interface VoiceCall {
+  id: string;
+  status: 'queued' | 'ringing' | 'in_progress' | 'completed' | 'failed';
+  to: string;
+  from?: string;
+  streamUrl?: string;
+  ivrFlowId?: string;
+}
+
+export interface FHIRResource {
+  resourceType: string;
+  id?: string;
+  [key: string]: any;
+}
+
+export interface PaymentIntent {
+  id: string;
+  status: 'requires_action' | 'processing' | 'succeeded' | 'canceled';
+  amount: number;
+  currency: string;
+  description?: string;
+}
+
+export interface WebRTCStats {
+  sessionId: string;
+  timestamp: Date;
+  stats: RTCStatsReport[];
+}
+
+export interface AuditEvent {
+  id: string;
+  type: string;
+  actorId: string;
+  subjectId: string;
+  occurredAt: Date;
+  data: Record<string, any>;
+}
+
+export interface AIResponse {
+  answer_markdown: string;
+  citations: string[];
+  confidence: number;
+  action: 'continue_ai' | 'handoff_human' | 'call_emergency';
+  reasons: string[];
+}

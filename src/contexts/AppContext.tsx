@@ -1,5 +1,21 @@
 import React, { createContext, useContext, useState } from 'react';
-import { Message, Consultation, ChatRoom, EmergencyAlert, Appointment, MedicalRecord, UserSettings } from '../types';
+import { 
+  Message, 
+  Consultation, 
+  ChatRoom, 
+  EmergencyAlert, 
+  Appointment, 
+  MedicalRecord, 
+  UserSettings,
+  RTCRoom,
+  ConsentTemplate,
+  ConsentRecord,
+  HandoffSession,
+  TriageAssessment,
+  AIResponse,
+  WebRTCStats,
+  AuditEvent
+} from '../types';
 
 interface AppContextType {
   // Navigation
@@ -38,6 +54,30 @@ interface AppContextType {
   // Settings
   userSettings: UserSettings | null;
   updateSettings: (settings: Partial<UserSettings>) => void;
+  
+  // Enhanced RTC Features
+  rtcRooms: RTCRoom[];
+  createRTCRoom: (room: Omit<RTCRoom, 'id' | 'createdAt'>) => void;
+  joinRTCRoom: (roomId: string, participantId: string) => void;
+  
+  // AI/RAG Features
+  aiResponses: AIResponse[];
+  sendAIQuery: (query: string) => Promise<AIResponse>;
+  
+  // Consent Management
+  consentTemplates: ConsentTemplate[];
+  consentRecords: ConsentRecord[];
+  createConsentRecord: (templateId: string, subjectId: string) => void;
+  
+  // Handoff/Escalation
+  handoffSessions: HandoffSession[];
+  createHandoff: (reason: string, context: Record<string, any>) => void;
+  
+  // Observability
+  webrtcStats: WebRTCStats[];
+  auditEvents: AuditEvent[];
+  recordWebRTCStats: (stats: Omit<WebRTCStats, 'timestamp'>) => void;
+  recordAuditEvent: (event: Omit<AuditEvent, 'id' | 'occurredAt'>) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
