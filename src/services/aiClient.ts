@@ -1,67 +1,156 @@
-// REVISED (NEW): マルチAIプロバイダ呼出の抽象化。開発時のみフロントから直叩き可。
-// 本番は /api/ai/chat などのAI Gatewayを介し、キーはサーバで管理してください。
+// REVISED: マルチAIプロバイダの「モデル一覧取得」と「チャット呼び出し」を統合。
+// 変更点:
+//  - fetchAvailableModels(provider, apiKey, endpointBase?) を追加（OpenAI/Anthropic/Gemini対応）
+//  - devKeyInBrowser=false の場合は /api/ai/models にフォールバック（本番用プロキシ）
+//  - OpenAI: GET https://api.openai.com/v1/models（Bearer）で一覧取得（公式ドキュメント）。 
+//  - Anthropic: GET https://api.anthropic.com/v1/models（x-api-key + anthropic-version）で一覧取得（公式）。
+//  - Gemini:   GET https://generativelanguage.googleapis.com/v1beta/models?key=API_KEY で一覧取得（公式）。
+//  - aiChatUnified は既存のまま（Responses / Messages / generateContent を利用）。
+//
+// 参照:
+//  - OpenAI List models: https://platform.openai.com/docs/api-reference/models/list
+//  - Anthropic List models: https://docs.anthropic.com/en/api/models-list
+//  - Gemini Models endpoint: https://ai.google.dev/api/models
 import { AIResponse, AIModelConfig, RetrievalConfig, KnowledgeDoc } from '../types';
 
-// 各プロバイダーからモデル一覧を動的取得
-export async function fetchAvailableModels(provider: string, apiKey?: string): Promise<{ id: string; name: string; description?: string }[]> {
-  if (!apiKey) return [];
-  
-  try {
-    switch (provider) {
-      case 'openai':
-        return await fetchOpenAIModels(apiKey);
-      case 'anthropic':
-        return await fetchAnthropicModels(apiKey);
-      case 'gemini':
-        return await fetchGeminiModels(apiKey);
-      default:
-        return [];
+export type Provider = 'openai' | 'anthropic' | 'gemini';
+
+export interface ModelInfo {
+  id: string;                 // APIで指定するモデルID（例: gpt-4o, claude-3-5-sonnet-latest, gemini-2.0-flash-exp）
+  name: string;               // 表示名（displayName 等）
+  description?: string;       // 説明
+  inputModalities?: string[]; // テキスト/画像/音声など（得られる場合）
+  outputModalities?: string[];// テキスト/画像/音声など（得られる場合）
+  contextWindow?: number;     // 入力トークン上限（得られる場合）
+}
+
+// ------------------------------------------------------------
+// モデル一覧の取得（開発時はフロント直叩き、本番はサーバのプロキシを推奨）
+// ------------------------------------------------------------
+export async function fetchAvailableModels(
+  provider: Provider,
+  apiKey?: string,
+  endpointBase?: string,
+  useBrowserKey: boolean = false
+): Promise<ModelInfo[]> {
+  // 本番: ブラウザにキーを置かず、サーバのプロキシへ
+  if (!useBrowserKey) {
+    try {
+      const r = await fetch(`/api/ai/models?provider=${encodeURIComponent(provider)}`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (r.ok) {
+        const data = await r.json();
+        return (data?.models || []) as ModelInfo[];
+      }
+    } catch (error) {
+      console.warn('AI models proxy unavailable, falling back to direct API (dev only).');
     }
-  } catch (error) {
-    console.warn(`Failed to fetch models for ${provider}:`, error);
+  }
+
+  if (!apiKey && provider !== 'gemini') {
     return [];
+  }
+
+  switch (provider) {
+    case 'openai':
+      return fetchOpenAIModels(apiKey!, endpointBase);
+    case 'anthropic':
+      return fetchAnthropicModels(apiKey!, endpointBase);
+    case 'gemini':
+      return fetchGeminiModels(apiKey); // Geminiはkeyがクエリに必要（ヘッダでも可）
+    default:
+      return [];
   }
 }
 
-async function fetchOpenAIModels(apiKey: string) {
-  const response = await fetch('https://api.openai.com/v1/models', {
+// --- OpenAI: GET /v1/models --------------------------------
+async function fetchOpenAIModels(apiKey: string, endpointBase?: string): Promise<ModelInfo[]> {
+  const base = endpointBase || 'https://api.openai.com';
+  const res = await fetch(`${base}/v1/models`, {
     headers: { 'Authorization': `Bearer ${apiKey}` }
   });
-  const data = await response.json();
-  return data.data
-    .filter((model: any) => model.id.includes('gpt') || model.id.includes('o1'))
-    .map((model: any) => ({
-      id: model.id,
-      name: model.id,
-      description: `Created: ${new Date(model.created * 1000).toLocaleDateString()}`
-    }))
-    .sort((a: any, b: any) => b.id.localeCompare(a.id));
+  if (!res.ok) {
+    throw new Error(`OpenAI models error ${res.status}`);
+  }
+  const j = await res.json();
+  const data: any[] = j?.data ?? [];
+  // OpenAIのListは埋め込み/音声等も含むため、チャット向け代表的名称で粗フィルタ
+  const chatLike = /^(gpt|o\d|o[34]|omni|gpt-4|gpt-4o|gpt-4\.1|gpt-4o-mini)/i;
+  const mapped: ModelInfo[] = data
+    .filter(m => typeof m?.id === 'string')
+    .map(m => ({ id: m.id, name: m.id, description: m.root ? `root:${m.root}` : undefined }))
+    .filter(m => chatLike.test(m.id));
+  // ある程度の安定順に並べ替え（新しそうな接頭辞を優先）
+  const order = ['o4', 'o3', 'omni', 'gpt-4.1', 'gpt-4o', 'gpt-4o-mini', 'gpt-4'];
+  mapped.sort((a,b) => {
+    const ia = order.findIndex(k => a.id.startsWith(k));
+    const ib = order.findIndex(k => b.id.startsWith(k));
+    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib) || a.id.localeCompare(b.id);
+  });
+  return dedupeById(mapped);
 }
 
-async function fetchAnthropicModels(apiKey: string) {
-  // Anthropicは公開APIでモデル一覧を提供していないため、既知のモデルを返す
-  return [
-    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Latest)', description: '最新の高性能モデル' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', description: '高速・軽量モデル' },
-    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', description: '最高性能モデル' },
-    { id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet', description: 'バランス型モデル' }
-  ];
+// --- Anthropic: GET /v1/models ------------------------------
+async function fetchAnthropicModels(apiKey: string, endpointBase?: string): Promise<ModelInfo[]> {
+  const base = endpointBase || 'https://api.anthropic.com';
+  const res = await fetch(`${base}/v1/models`, {
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    }
+  });
+  if (!res.ok) {
+    throw new Error(`Anthropic models error ${res.status}`);
+  }
+  const j = await res.json();
+  const data: any[] = j?.data ?? [];
+  const mapped: ModelInfo[] = data.map((m: any) => ({
+    id: m?.id,
+    name: m?.display_name || m?.id,
+    description: m?.description,
+    inputModalities: m?.input_modalities || [],
+    outputModalities: m?.output_modalities || [],
+    contextWindow: typeof m?.context_window === 'number' ? m.context_window : undefined
+  })).filter(m => !!m.id);
+  return dedupeById(mapped);
 }
 
-async function fetchGeminiModels(apiKey: string) {
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-  const data = await response.json();
-  return data.models
-    ?.filter((model: any) => model.name.includes('gemini') && model.supportedGenerationMethods?.includes('generateContent'))
-    .map((model: any) => ({
-      id: model.name.replace('models/', ''),
-      name: model.displayName || model.name.replace('models/', ''),
-      description: model.description || ''
-    })) || [];
+// --- Gemini: GET /v1beta/models -----------------------------
+async function fetchGeminiModels(apiKey?: string): Promise<ModelInfo[]> {
+  // APIキーはクエリかヘッダ（x-goog-api-key）どちらでも可。ここではクエリに付与。
+  const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
+  if (apiKey) url.searchParams.set('key', apiKey);
+  const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) {
+    throw new Error(`Gemini models error ${res.status}`);
+  }
+  const j = await res.json();
+  const models: any[] = j?.models ?? [];
+  const mapped: ModelInfo[] = models.map((m: any) => ({
+    id: m?.name,                       // 例: models/gemini-2.0-flash-exp
+    name: m?.displayName || m?.name,   // 例: Gemini 2.0 Flash Experimental
+    description: m?.description,
+    inputModalities: m?.inputModalities || m?.supportedGenerationMethods,
+    outputModalities: m?.outputModalities,
+    contextWindow: m?.inputTokenLimit
+  })).filter(m => !!m.id);
+  return dedupeById(mapped);
 }
 
-// 役割: NotebookLM的に「与えたソースのみで回答」→ここではUI側のメタ情報を付与。
-// 実際のRAGはサーバ側でベクタ検索/再ランクを実装してください。
+function dedupeById(list: ModelInfo[]): ModelInfo[] {
+  const seen = new Set<string>();
+  const out: ModelInfo[] = [];
+  for (const m of list) {
+    if (!seen.has(m.id)) { seen.add(m.id); out.push(m); }
+  }
+  return out;
+}
+
+// ------------------------------------------------------------
+// チャット統合呼び出し（既存）
+// ------------------------------------------------------------
 export async function aiChatUnified(params: {
   config: AIModelConfig;
   messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
@@ -70,7 +159,7 @@ export async function aiChatUnified(params: {
 }): Promise<AIResponse> {
   const { config, messages } = params;
   if (!config.devKeyInBrowser || !config.apiKey) {
-    // サーバ側AI Gateway想定
+    // 本番はGateway経由でRAGや監査・レート制御を一元化
     try {
       const r = await fetch('/api/ai/chat', {
         method: 'POST',
@@ -91,7 +180,6 @@ export async function aiChatUnified(params: {
     }
   }
 
-  // --- 以下、開発モードのみ: 直接各社API ---
   switch (config.provider) {
     case 'openai':
       return callOpenAI(config, messages);
@@ -104,9 +192,8 @@ export async function aiChatUnified(params: {
   }
 }
 
+// --- OpenAI Responses API -----------------------------------
 async function callOpenAI(config: AIModelConfig, messages: { role: string; content: string }[]): Promise<AIResponse> {
-  // OpenAI Responses API（2025）に準拠
-  // https://platform.openai.com/docs/api-reference/responses
   const input = messages.map(m => ({ role: m.role, content: [{ type: 'text', text: m.content }] }));
   const r = await fetch(`${config.endpointBase || 'https://api.openai.com'}/v1/responses`, {
     method: 'POST',
@@ -130,9 +217,8 @@ async function callOpenAI(config: AIModelConfig, messages: { role: string; conte
   };
 }
 
+// --- Anthropic Messages API ---------------------------------
 async function callAnthropic(config: AIModelConfig, messages: { role: string; content: string }[]): Promise<AIResponse> {
-  // Anthropic Messages API
-  // https://docs.anthropic.com/en/api/messages
   const userContent = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
   const systemMsg = messages.find(m => m.role === 'system')?.content;
   const r = await fetch(`${config.endpointBase || 'https://api.anthropic.com'}/v1/messages`, {
@@ -160,12 +246,11 @@ async function callAnthropic(config: AIModelConfig, messages: { role: string; co
   };
 }
 
+// --- Gemini generateContent ---------------------------------
 async function callGemini(config: AIModelConfig, messages: { role: string; content: string }[]): Promise<AIResponse> {
-  // Gemini API generateContent
-  // https://ai.google.dev/api/generate-content
   const input = messages.map(m => ({ role: m.role, parts: [{ text: m.content }] }));
-  const model = config.model || 'gemini-2.5-flash';
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+  const model = config.model || 'models/gemini-2.0-flash';
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': `${config.apiKey}` },
     body: JSON.stringify({ contents: input })

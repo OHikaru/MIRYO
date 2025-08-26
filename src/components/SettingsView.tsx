@@ -1,12 +1,15 @@
-// REVISED: 「AI & 知識ベース」タブを追加し、プロバイダ選択・APIキー・モデル・RAG設定・ソース登録を提供
-import React, { useEffect, useState } from 'react';
-import { Settings, User, Bell, Shield, Globe, Cpu, Database, Save, KeyRound, RefreshCw } from 'lucide-react';
+// REVISED: 「AI & 知識ベース」タブに"モデル一覧の動的取得"を追加し、選択式に変更。
+// 変更点:
+//  - モデル一覧の取得ボタン（RefreshCw）と自動取得（APIキー/プロバイダ変更時）
+//  - availableModels ステートでプロバイダ別のリストを保持
+//  - モデルが取得済みの場合は <select> で選択、未取得時は手入力欄をフォールバック
+import React, { useEffect, useMemo, useState } from 'react';
+import { Settings, User, Shield, Cpu, Database, Save, KeyRound, RefreshCw } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import { AIProvider, AISettings, UserSettings } from '../types';
 import KnowledgeBaseManager from './KnowledgeBaseManager';
-import { fetchAvailableModels } from '../services/aiClient';
-
+import { fetchAvailableModels, ModelInfo, Provider } from '../services/aiClient';
 
 const SettingsView: React.FC = () => {
   const { user } = useAuth();
@@ -14,10 +17,19 @@ const SettingsView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'profile' | 'privacy' | 'ai'>('ai');
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
-  const [availableModels, setAvailableModels] = useState<{ [key: string]: { id: string; name: string; description?: string }[] }>({});
+
+  // 追加: モデル一覧
+  const [availableModels, setAvailableModels] = useState<Record<Provider, ModelInfo[]>>({
+    openai: [], anthropic: [], gemini: []
+  });
   const [loadingModels, setLoadingModels] = useState(false);
+  const currentProvider: Provider = (settings?.ai?.model.provider || 'openai') as Provider;
+  const currentApiKey = settings?.ai?.model.apiKey || '';
+  const devKeyInBrowser = !!settings?.ai?.model.devKeyInBrowser;
+  const endpointBase = settings?.ai?.model.endpointBase || undefined;
 
   useEffect(() => {
+    // 初期設定が無い場合のデフォルトを投入
     if (!userSettings && user) {
       updateSettings({
         locale: 'ja-JP',
@@ -39,16 +51,42 @@ const SettingsView: React.FC = () => {
     setSettings(next);
     setHasChanges(true);
   };
-
   const setModel = (patch: Partial<AISettings['model']>) => {
     if (!settings?.ai) return;
     setAI({ model: { ...settings.ai.model, ...patch } });
   };
-
   const setRetrieval = (patch: Partial<AISettings['retrieval']>) => {
     if (!settings?.ai) return;
     setAI({ retrieval: { ...settings.ai.retrieval, ...patch } });
   };
+
+  // モデル一覧取得
+  const refreshModels = async () => {
+    if (!settings?.ai?.model.provider) return;
+    setLoadingModels(true);
+    try {
+      const provider = settings.ai.model.provider as Provider;
+      const models = await fetchAvailableModels(provider, currentApiKey, endpointBase, devKeyInBrowser);
+      setAvailableModels(prev => ({ ...prev, [provider]: models }));
+
+      // 既定モデルが空の場合は先頭を採用
+      if (!settings.ai.model.model && models[0]?.id) {
+        setModel({ model: models[0].id });
+      }
+    } catch (e) {
+      console.error('Failed to fetch models:', e);
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
+  // APIキーまたはプロバイダ変更時に自動リフレッシュ（開発モードまたはサーバプロキシがある前提）
+  useEffect(() => {
+    if (settings?.ai?.model.provider) {
+      refreshModels();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings?.ai?.model.provider, settings?.ai?.model.apiKey, settings?.ai?.model.devKeyInBrowser, settings?.ai?.model.endpointBase]);
 
   const onSave = () => {
     if (!settings) return;
@@ -56,29 +94,7 @@ const SettingsView: React.FC = () => {
     setHasChanges(false);
   };
 
-  const refreshModels = async () => {
-    if (!settings?.ai?.model.apiKey || !settings?.ai?.model.provider) return;
-    
-    setLoadingModels(true);
-    try {
-      const models = await fetchAvailableModels(settings.ai.model.provider, settings.ai.model.apiKey);
-      setAvailableModels(prev => ({
-        ...prev,
-        [settings.ai.model.provider]: models
-      }));
-    } catch (error) {
-      console.error('Failed to fetch models:', error);
-    } finally {
-      setLoadingModels(false);
-    }
-  };
-
-  // APIキーが変更されたら自動でモデル一覧を取得
-  useEffect(() => {
-    if (settings?.ai?.model.apiKey && settings?.ai?.model.provider) {
-      refreshModels();
-    }
-  }, [settings?.ai?.model.apiKey, settings?.ai?.model.provider]);
+  const modelOptions = useMemo(() => availableModels[currentProvider] || [], [availableModels, currentProvider]);
 
   return (
     <div className="flex h-full">
@@ -105,7 +121,13 @@ const SettingsView: React.FC = () => {
 
       {/* Content */}
       <section className="flex-1 flex flex-col">
-        <div className="px-4 py-2 border-b bg-white flex justify-end">
+        <div className="px-4 py-2 border-b bg-white flex justify-end gap-2">
+          <button
+            onClick={refreshModels}
+            disabled={loadingModels}
+            className={`px-3 py-1.5 rounded inline-flex items-center gap-2 ${loadingModels? 'bg-gray-100 text-gray-500 cursor-wait':'bg-gray-100 hover:bg-gray-200'}`}>
+            <RefreshCw size={16} className={loadingModels ? 'animate-spin':''}/> モデル一覧を取得
+          </button>
           <button
             disabled={!hasChanges}
             onClick={onSave}
@@ -194,34 +216,29 @@ const SettingsView: React.FC = () => {
                   </div>
                   <div>
                     <label className="text-xs text-gray-500">モデル</label>
-                    <div className="flex gap-2">
+                    {modelOptions.length > 0 ? (
                       <select
-                        value={settings?.ai?.model.model || ''}
+                        value={settings?.ai?.model.model || modelOptions[0]?.id || ''}
                         onChange={e => setModel({ model: e.target.value })}
-                        className="border rounded flex-1 px-2 py-1"
-                        disabled={loadingModels}
+                        className="border rounded w-full px-2 py-1"
                       >
-                        <option value="">モデルを選択してください</option>
-                        {availableModels[settings?.ai?.model.provider || 'openai']?.map(model => (
-                          <option key={model.id} value={model.id}>
-                            {model.name}
+                        {modelOptions.map(m => (
+                          <option key={m.id} value={m.id}>
+                            {m.name || m.id}
                           </option>
                         ))}
                       </select>
-                      <button
-                        onClick={refreshModels}
-                        disabled={loadingModels || !settings?.ai?.model.apiKey}
-                        className="px-2 py-1 border rounded hover:bg-gray-50 disabled:opacity-50"
-                        title="モデル一覧を更新"
-                      >
-                        <RefreshCw size={16} className={loadingModels ? 'animate-spin' : ''} />
-                      </button>
-                    </div>
-                    {settings?.ai?.model.model && availableModels[settings?.ai?.model.provider || 'openai'] && (
-                      <div className="mt-1 text-xs text-gray-500">
-                        {availableModels[settings.ai.model.provider].find(m => m.id === settings.ai.model.model)?.description}
-                      </div>
+                    ) : (
+                      <input
+                        value={settings?.ai?.model.model || ''}
+                        onChange={e => setModel({ model: e.target.value })}
+                        className="border rounded w-full px-2 py-1"
+                        placeholder="例: gpt-4o-mini / claude-3-5-sonnet-latest / models/gemini-2.0-flash"
+                      />
                     )}
+                    <div className="text-xs text-gray-500 mt-1">
+                      ※ モデル一覧取得はベンダのAPIに依存します（OpenAI/Anthropic/Gemini）。取得できない場合は直接IDを入力してください。
+                    </div>
                   </div>
                   <div>
                     <label className="text-xs text-gray-500 flex items-center gap-2"><KeyRound size={14}/> 開発用APIキー（本番禁止）</label>
