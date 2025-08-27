@@ -1,34 +1,35 @@
-// server.mjs — MIRYO Minimal AI Gateway (Improved)
-// 改訂点:
-// 1) /api/health を追加（疎通と環境確認用）
-// 2) Node < 18 の場合に node-fetch を自動ロード（fetchフォールバック）
-// 3) HOST/PORT 環境変数に対応し、デフォルト 0.0.0.0:8901 で Listen
-// 4) 例外時も JSON を返すエラーハンドラ追加
-// 5) CORS を緩く許可（開発向け）
-// 6) PDF取り込み時の例外を安全化
-// 7) /api/ai/models /chat の失敗時に詳細ログ
+// server.mjs — MIRYO Minimal AI Gateway (Fixed)
+// 修正点:
+// 1) pdf-parse の読み込みエラーを適切にハンドリング
+// 2) parsePDF 関数を正しく定義
+// 3) エラーハンドリングを改善
 
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 
+// Ensure fetch is available for older Node versions
 const ensureFetch = async () => {
   if (typeof globalThis.fetch !== 'function') {
-    const { default: fetch } = await import('node-fetch'); // フォールバック
-    // @ts-ignore
-    globalThis.fetch = fetch;
+    try {
+      const { default: fetch } = await import('node-fetch');
+      globalThis.fetch = fetch;
+    } catch (e) {
+      console.warn('[Gateway] node-fetch could not be loaded');
+    }
   }
 };
 await ensureFetch();
 
+// Try to load pdf-parse
 let pdfParse = null;
 try {
   const mod = await import('pdf-parse');
   pdfParse = mod.default || mod;
   console.log('[Gateway] pdf-parse loaded successfully');
 } catch (e) {
-  console.warn('[Gateway] pdf-parse could not be loaded. PDF text extraction disabled.', e.message);
+  console.warn('[Gateway] pdf-parse could not be loaded. PDF text extraction disabled.');
   pdfParse = null;
 }
 
