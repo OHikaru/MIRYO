@@ -198,17 +198,41 @@ async function callGemini(config: AIModelConfig, messages: { role: string; conte
   const input = messages.map(m => ({ role: m.role, parts: [{ text: m.content }] }));
   const model = config.model || 'models/gemini-2.0-flash';
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/${encodeURIComponent(model)}:generateContent`, {
+    const apiKey = config.apiKey?.trim();
+    if (!apiKey) {
+      throw new Error('Gemini API key is required');
+    }
+    
+    const url = `https://generativelanguage.googleapis.com/v1beta/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const r = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': `${config.apiKey}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: input })
     });
     const j = await r.json();
-    if (!r.ok) throw new Error(`Gemini ${r.status} - ${j?.error?.message || 'unknown error'}`);
+    if (!r.ok) {
+      const errorMsg = j?.error?.message || j?.error?.details || `HTTP ${r.status}`;
+      throw new Error(`Gemini API error: ${errorMsg}`);
+    }
     const text = j?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ?? JSON.stringify(j);
     return { answer_markdown: text, citations: [], confidence: 0.75, action: 'continue_ai', reasons: [] };
   } catch (e) {
+    if (e instanceof TypeError && e.message.includes('fetch')) {
+      return { 
+        answer_markdown: `Gemini API接続エラー: ネットワーク接続を確認してください。プロキシやファイアウォールの設定も確認してください。`, 
+        citations: [], 
+        confidence: 0.1, 
+        action: 'continue_ai', 
+        reasons: ['network_error'] 
+      };
+    }
     const msg = e instanceof Error ? e.message : String(e);
-    return { answer_markdown: `Gemini呼び出しに失敗: ${msg}`, citations: [], confidence: 0.3, action: 'continue_ai', reasons: ['provider_call_failed'] };
+    return { 
+      answer_markdown: `Gemini呼び出しに失敗: ${msg}`, 
+      citations: [], 
+      confidence: 0.3, 
+      action: 'continue_ai', 
+      reasons: ['provider_call_failed'] 
+    };
   }
 }
