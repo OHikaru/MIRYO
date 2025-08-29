@@ -6,6 +6,7 @@ import {
 } from '../types';
 import { useAuth } from './AuthContext';
 import { aiChatUnified } from '../services/aiClient';
+import { getCurrentAIConfig } from '../services/aiConfig';
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
@@ -42,12 +43,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     notifications: true,
     privacyLevel: 'standard',
     ai: {
-      model: {
-        provider: 'openai',
-        model: 'gpt-4o-mini',
-        endpointBase: 'https://api.openai.com',
-        devKeyInBrowser: true,
-      },
+      model: getCurrentAIConfig(),
       retrieval: { topK: 5, threshold: 0.45, scopes: ['clinic_docs', 'faq', 'policies'] },
     },
   });
